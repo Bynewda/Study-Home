@@ -428,76 +428,62 @@
   function renderHome(root, ctx) {
     const d = Store.data();
     const tk = todayKey();
-    root.append(el('p', { class: 'page-intro' }, '오늘 확보한 시간으로 가장 중요한 공부부터. 수험 핵심 과업을 먼저 보여 줍니다.'));
+    const metrics = homeMetrics(d, tk);
 
+    // (상단) 시험일은 작은 상태 배지로만 (보고서 10쪽: 빈 지표가 첫 화면을 차지하지 않게)
     const dd0 = dday(d.settings.examDate, d.settings.examDateConfirmed);
-    const banner = el('div', { class: 'card', style: 'display:flex;align-items:center;gap:16px;flex-wrap:wrap;' });
+    const statusRow = el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center' });
     if (dd0 == null) {
-      banner.append(
-        el('div', {}, [el('strong', {}, '시험일 미확정'), el('p', { class: 'hint', style: 'margin:4px 0 0' }, '공식 공고를 확인한 뒤 설정에서 시험일을 입력하면 D-Day가 표시됩니다. 임의 날짜는 만들지 않습니다.')]),
-        el('span', { class: 'spacer' }),
-        el('button', { class: 'btn btn-sm', onclick: function () { ctx.navigate('settings'); } }, '시험일 설정')
+      statusRow.append(
+        el('span', { class: 'tag tag-muted' }, '시험일 설정 전'),
+        el('button', { class: 'btn btn-sm btn-ghost', style: 'min-height:32px', onclick: function () { ctx.navigate('settings'); } }, '설정하기'),
       );
     } else {
-      banner.append(el('div', {}, [el('span', { class: 'tag tag-exam' }, '변리사 2차 D-' + (dd0 >= 0 ? dd0 : '지남')), el('p', { class: 'hint', style: 'margin:6px 0 0' }, '시험일 ' + fmtDate(parseKey(d.settings.examDate)))]));
+      statusRow.append(
+        el('span', { class: 'tag tag-exam' }, '변리사 2차 D-' + (dd0 >= 0 ? dd0 : '지남')),
+        el('span', { class: 'hint' }, fmtDate(parseKey(d.settings.examDate)) + ' 시험'),
+      );
     }
-    root.append(banner);
+    root.append(statusRow);
 
-    const metrics = homeMetrics(d, tk);
-    root.append(el('div', { class: 'grid grid-4', style: 'margin:16px 0;' }, [
-      metricCard('오늘 확보 시간', metrics.securedToday == null ? null : fmtMin(metrics.securedToday), '겹치지 않는 수험 블록 합계', function () { ctx.navigate('week'); }),
-      metricCard('이번 주 수험 이행', metrics.adherence == null ? null : metrics.adherence + '%', metrics.adherenceSub, function () { ctx.navigate('week'); }),
-      metricCard('복습 대기', metrics.dueReviews == null ? null : metrics.dueReviews + '개', '복습일이 오늘 이전', function () { ctx.navigate('review'); }),
-      metricCard('학업 알림', metrics.acadAlerts == null ? null : metrics.acadAlerts + '건', '마감 진입/지연', function () { ctx.navigate('academic'); }),
-    ]));
+    // (①) 지금 할 공부 — 가장 크게. 진행 중 세션 > 다음 블록 > 첫 핵심 과업 순
+    root.append(buildNowCard(d, ctx));
 
     const grid = el('div', { class: 'grid grid-7to3' });
     const left = el('div', { class: 'stack' });
 
-    const focusCard = el('div', { class: 'card' });
-    focusCard.append(el('div', { class: 'section-head' }, [el('h2', {}, '① 오늘의 핵심 수험 과업'), el('button', { class: 'btn btn-sm', onclick: function () { openFocusPicker(ctx); } }, '과업 선택')]));
+    // (②) 오늘의 흐름 — 오늘 블록을 시간순 타임라인으로
+    left.append(buildTodayFlow(d, ctx));
+
+    // 오늘의 핵심 과업(최대 3) — 지금 할 공부 외 나머지
     const focusTasks = d.focusToday.map(function (id) { return Store.task(id); }).filter(Boolean);
+    const focusCard = el('div', { class: 'card' });
+    focusCard.append(el('div', { class: 'section-head' }, [el('h3', {}, '오늘의 핵심 과업'), el('button', { class: 'btn btn-sm', onclick: function () { openFocusPicker(ctx); } }, '과업 선택')]));
     if (focusTasks.length === 0) {
-      focusCard.append(el('div', { class: 'empty' }, [
-        el('span', { class: 'emoji' }, '📝'), el('h3', {}, '아직 오늘의 과업이 없습니다'),
-        el('p', {}, '가장 중요한 수험 과업을 최대 3개까지 고르고 바로 공부를 시작하세요.'),
-        el('button', { class: 'btn btn-primary', onclick: function () { openTaskEditor(null, ctx, { pinToday: true }); } }, '첫 과업 만들기'),
-      ]));
+      focusCard.append(el('p', { class: 'hint' }, '가장 중요한 수험 과업을 최대 3개까지 골라 두면 여기와 "지금 할 공부"에 나타납니다.'));
+      focusCard.append(el('button', { class: 'btn btn-sm', style: 'margin-top:8px', onclick: function () { openTaskEditor(null, ctx, { pinToday: true }); } }, '첫 과업 만들기'));
     } else {
       const list = el('div', { class: 'stack' });
       focusTasks.forEach(function (t, i) { list.append(focusItem(t, i, ctx)); });
       focusCard.append(list);
     }
     left.append(focusCard);
-
-    const next = nextBlock(d);
-    const nextCard = el('div', { class: 'card' });
-    nextCard.append(el('h3', {}, '② 확보한 수험 시간과 다음 블록'));
-    if (next) {
-      const sub = Store.subject(next.subjectId);
-      nextCard.append(el('div', { class: 'row between' }, [
-        el('div', {}, [el('div', { style: 'font-weight:700' }, fmtTime(next.start) + '~' + fmtTime(next.end) + ' · ' + next.title), el('div', { class: 'hint' }, [sub ? el('span', { class: 'tag tag-exam' }, sub.name) : '', next.locked ? ' 🔒 보호 블록' : ''])]),
-        el('button', { class: 'btn btn-sm', onclick: function () { ctx.navigate('week'); } }, '주간 계획 열기'),
-      ]));
-    } else {
-      nextCard.append(el('p', { class: 'hint' }, '오늘 예약된 수험 블록이 없습니다. 주간 계획에서 공부 시간을 먼저 확보하세요.'));
-      nextCard.append(el('button', { class: 'btn btn-sm', onclick: function () { ctx.navigate('week'); } }, '주간 계획으로'));
-    }
-    left.append(nextCard);
     grid.append(left);
 
+    // (오른쪽) ③ 복습 · ④ 학업 마감 + 작은 지표
     const right = el('div', { class: 'stack' });
+
     const revCard = el('div', { class: 'card' });
-    revCard.append(el('h3', {}, '③ 오늘의 복습'));
-    if (metrics.dueReviews == null) { revCard.append(el('p', { class: 'hint' }, '아직 복습 카드가 없습니다.')); revCard.append(el('button', { class: 'btn btn-sm', onclick: function () { ctx.navigate('review'); } }, '첫 카드 만들기')); }
-    else if (metrics.dueReviews === 0) { revCard.append(el('p', { class: 'hint' }, '오늘 복습할 카드가 없습니다. 👍')); }
-    else { revCard.append(el('p', {}, [el('strong', {}, metrics.dueReviews + '개'), ' 의 카드가 복습을 기다립니다.'])); revCard.append(el('p', { class: 'hint' }, '최근 감점 쟁점부터 돌아봅니다.')); revCard.append(el('button', { class: 'btn btn-primary btn-sm', onclick: function () { ctx.navigate('review'); } }, '복습 시작')); }
+    revCard.append(el('h3', {}, '다시 볼 쟁점'));
+    if (metrics.dueReviews == null) { revCard.append(el('p', { class: 'hint' }, '복습 카드가 아직 없습니다.')); revCard.append(el('button', { class: 'btn btn-sm', onclick: function () { ctx.navigate('review'); } }, '첫 카드 만들기')); }
+    else if (metrics.dueReviews === 0) { revCard.append(el('p', { class: 'hint' }, '오늘 복습할 카드가 없습니다.')); }
+    else { revCard.append(el('p', {}, [el('strong', {}, metrics.dueReviews + '개'), ' 의 카드 · 취약 쟁점부터'])); revCard.append(el('button', { class: 'btn btn-primary btn-sm', style: 'margin-top:4px', onclick: function () { ctx.navigate('review'); } }, '복습 시작')); }
     right.append(revCard);
 
     const acadCard = el('div', { class: 'card', style: 'background:var(--acad-bg)' });
-    acadCard.append(el('h3', {}, '④ 학업 마감 확인'));
+    acadCard.append(el('h3', {}, '놓치면 안 되는 학업'));
     const upcoming = upcomingAssignments(d);
-    if (upcoming.length === 0) acadCard.append(el('p', { class: 'hint', style: 'color:var(--acad-fg)' }, '임박한 과제 마감이 없습니다. 작성과 제출은 구분해 관리합니다.'));
+    if (upcoming.length === 0) acadCard.append(el('p', { class: 'hint', style: 'color:var(--acad-fg)' }, '임박한 과제 마감이 없습니다.'));
     else {
       const ul = el('div', { class: 'stack' });
       upcoming.slice(0, 3).forEach(function (a) { ul.append(el('div', { style: 'font-size:.9rem' }, [el('strong', {}, a.title), el('span', { class: 'hint', style: 'color:var(--acad-fg)' }, ' · ' + fmtDate(a.due) + (a.submitted ? ' · 제출완료' : ' · 미제출'))])); });
@@ -505,8 +491,122 @@
     }
     acadCard.append(el('button', { class: 'btn btn-sm', style: 'margin-top:12px', onclick: function () { ctx.navigate('academic'); } }, '대학 학업 열기'));
     right.append(acadCard);
+
+    // 작은 지표 묶음 — 값이 있는 것만, 빈 '미기록' 반복 대신 한 카드에 (보고서 10쪽)
+    const miniRows = [];
+    if (metrics.securedToday != null) miniRows.push(['오늘 확보', fmtMin(metrics.securedToday), 'week']);
+    if (metrics.adherence != null) miniRows.push(['이번 주 이행', metrics.adherence + '%', 'week']);
+    const miniCard = el('div', { class: 'card' });
+    miniCard.append(el('h3', { style: 'margin-bottom:8px' }, '현황'));
+    if (miniRows.length === 0) {
+      miniCard.append(el('p', { class: 'hint' }, '주간 계획에서 수험 시간을 확보하면 확보 시간·이행률이 표시됩니다.'));
+      miniCard.append(el('button', { class: 'btn btn-sm', style: 'margin-top:8px', onclick: function () { ctx.navigate('week'); } }, '주간 계획 열기'));
+    } else {
+      miniRows.forEach(function (r) {
+        miniCard.append(el('button', { class: 'row between', style: 'width:100%;background:none;border:none;padding:8px 0;cursor:pointer;font:inherit;color:inherit;text-align:left', onclick: function () { ctx.navigate(r[2]); } }, [
+          el('span', { class: 'hint' }, r[0]), el('strong', {}, r[1]),
+        ]));
+      });
+    }
+    right.append(miniCard);
+
     grid.append(right);
     root.append(grid);
+  }
+
+  // ① "지금 할 공부" 큰 카드 (보고서 10쪽: 현재/다음 핵심 과업 + 공부 시작)
+  function buildNowCard(d, ctx) {
+    const card = el('div', { class: 'card', style: 'border-left:4px solid var(--accent)' });
+    const running = Timer.current();
+    const nowIso = new Date().toISOString();
+    // 지금 진행 중 블록(시작<=now<종료)
+    const current = d.blocks.filter(function (b) { return isExam(d, b) && b.start <= nowIso && b.end > nowIso; }).sort(function (a, b) { return a.start.localeCompare(b.start); })[0];
+    const next = nextBlock(d);
+    const firstFocus = d.focusToday.map(function (id) { return Store.task(id); }).filter(Boolean)[0];
+
+    card.append(el('div', { class: 'hint', style: 'margin-bottom:4px' }, '지금 할 공부'));
+
+    if (running) {
+      const t = running.taskId ? Store.task(running.taskId) : null;
+      card.append(
+        el('h2', { style: 'font-size:1.4rem' }, (running.title || (t && t.title) || '수험 공부') + ' · 진행 중'),
+        el('p', { class: 'hint' }, '집중 세션이 진행 중입니다. 상단 배너에서 남은 시간을 볼 수 있습니다.'),
+        el('button', { class: 'btn btn-primary btn-lg', style: 'margin-top:8px', onclick: function () { Timer.stop(); ctx.refresh(); } }, '세션 종료 · 기록'),
+      );
+      return card;
+    }
+
+    // 블록(연결 과업이 있으면 그 과업), 없으면 첫 핵심 과업
+    const block = current || next;
+    let task = null, subjectId = null, title = null, timeLabel = null;
+    if (block) {
+      task = block.taskId ? Store.task(block.taskId) : null;
+      subjectId = block.subjectId || (task && task.subjectId);
+      title = (task && task.title) || block.title;
+      timeLabel = fmtTime(block.start) + '~' + fmtTime(block.end) + (current ? ' · 지금 시간' : ' · 다음 블록');
+    } else if (firstFocus) {
+      task = firstFocus; subjectId = firstFocus.subjectId; title = firstFocus.title;
+      timeLabel = firstFocus.estMin ? '예상 ' + fmtMin(firstFocus.estMin) : null;
+    }
+
+    if (!title) {
+      card.append(
+        el('h2', { style: 'font-size:1.3rem' }, '오늘 할 공부를 정해 보세요'),
+        el('p', { class: 'hint' }, '핵심 과업을 고르거나 주간 계획에서 수험 시간을 확보하면 여기에 바로 시작할 공부가 나타납니다.'),
+        el('div', { class: 'row', style: 'gap:8px;margin-top:8px' }, [
+          el('button', { class: 'btn btn-primary', onclick: function () { openTaskEditor(null, ctx, { pinToday: true }); } }, '과업 만들기'),
+          el('button', { class: 'btn', onclick: function () { ctx.navigate('week'); } }, '주간 계획 열기'),
+        ]),
+      );
+      return card;
+    }
+
+    const sub = subjectId ? Store.subject(subjectId) : null;
+    card.append(el('h2', { style: 'font-size:1.4rem;margin-bottom:6px' }, title));
+    card.append(el('div', { class: 'row', style: 'gap:8px;margin-bottom:12px' }, [
+      sub ? el('span', { class: 'tag tag-exam' }, sub.name) : '',
+      timeLabel ? el('span', { class: 'hint' }, timeLabel) : '',
+      (block && block.locked) ? el('span', { class: 'hint' }, '보호 블록') : '',
+    ]));
+    const actions = el('div', { class: 'row', style: 'gap:8px' });
+    actions.append(el('button', { class: 'btn btn-primary btn-lg', onclick: function () {
+      Timer.start(task ? task.id : null, subjectId, title); ctx.toast('집중 세션을 시작했습니다.'); ctx.refresh();
+    } }, '공부 시작'));
+    // 연결 노트가 있으면 바로 열기 (쟁점 동선)
+    if (task && task.issue) {
+      const relNote = d.notes.find(function (n) { return n.subjectId === subjectId && n.issue && n.issue.trim() === task.issue.trim(); });
+      if (relNote) actions.append(el('button', { class: 'btn', onclick: function () { openNoteById(relNote.id, ctx); } }, '관련 노트'));
+    }
+    actions.append(el('button', { class: 'btn btn-ghost', onclick: function () { ctx.navigate('week'); } }, '계획 조정'));
+    card.append(actions);
+    return card;
+  }
+
+  // ② 오늘의 흐름 — 오늘 블록 시간순 타임라인
+  function buildTodayFlow(d, ctx) {
+    const tk = todayKey();
+    const card = el('div', { class: 'card' });
+    card.append(el('div', { class: 'section-head' }, [el('h3', {}, '오늘의 흐름'), el('button', { class: 'btn btn-sm', onclick: function () { ctx.navigate('week'); } }, '주간 계획')]));
+    const today = d.blocks.filter(function (b) { return b.date === tk; }).sort(function (a, b) { return a.start.localeCompare(b.start); });
+    if (today.length === 0) {
+      card.append(el('p', { class: 'hint' }, '오늘 예약된 일정이 없습니다. 주간 계획에서 수험 시간을 먼저 확보하세요.'));
+      return card;
+    }
+    const nowIso = new Date().toISOString();
+    const list = el('div', { class: 'stack', style: 'gap:6px' });
+    today.forEach(function (b) {
+      const kind = blockKind(d, b);
+      const sub = Store.subject(b.subjectId);
+      const isNow = b.start <= nowIso && b.end > nowIso;
+      const past = b.end <= nowIso;
+      list.append(el('div', { class: 'row', style: 'gap:10px;align-items:center;padding:6px 0;' + (past ? 'opacity:.55;' : '') }, [
+        el('span', { class: 'hint', style: 'width:92px;flex:none;font-variant-numeric:tabular-nums' }, fmtTime(b.start) + '~' + fmtTime(b.end)),
+        el('span', { class: 'tag tag-' + (kind === 'exam' ? 'exam' : kind === 'acad' ? 'acad' : 'muted'), style: 'flex:none' }, kind === 'exam' ? '수험' : kind === 'acad' ? '학업' : '기타'),
+        el('span', { style: 'font-weight:' + (isNow ? '800' : '500') + (isNow ? ';color:var(--accent)' : '') }, (b.locked ? '🔒 ' : '') + (b.title || (sub ? sub.name : '블록')) + (isNow ? ' · 지금' : '')),
+      ]));
+    });
+    card.append(list);
+    return card;
   }
 
   function homeMetrics(d, tk) {
