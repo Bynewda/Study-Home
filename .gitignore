@@ -1,0 +1,14 @@
+# 로컬 전용 — GitHub에 올릴 필요 없는 파일
+server.ps1
+start-server.bat
+접속방법.md
+깃허브배포방법.md
+
+# 임시/시스템 파일
+_*.txt
+_*.png
+_*.html
+*.log
+Thumbs.db
+desktop.ini
+.DS_Store
