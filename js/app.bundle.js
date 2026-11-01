@@ -796,16 +796,36 @@
       root.append(el('div', { class: 'empty' }, [el('span', { class: 'emoji' }, '✍️'), el('h3', {}, '아직 답안 기록이 없습니다'), el('p', {}, '과목·출처·회차·배점을 등록하고 채점 결과와 감점 원인을 남겨보세요.'), el('button', { class: 'btn btn-primary', onclick: function () { openAnswerEditor(null, ctx); } }, '첫 연습 등록')]));
       return;
     }
+    function scoreOf(x) { return (x.items || []).reduce(function (s, it) { return s + (Number(it.score) || 0); }, 0); }
     const list = el('div', { class: 'list' });
     d.answers.slice().sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); }).forEach(function (a) {
       const sub = Store.subject(a.subjectId);
-      const sum = (a.items || []).reduce(function (s, it) { return s + (Number(it.score) || 0); }, 0);
+      const sum = scoreOf(a);
       const max = (a.items || []).reduce(function (s, it) { return s + (Number(it.max) || 0); }, 0);
       const raterLabel = (RATERS.find(function (r) { return r[0] === a.rater; }) || [,'본인 평가'])[1];
+      const unscored = a.scored === false;
       const titleRow = el('div', { class: 'title' }, [sub ? el('span', { class: 'tag tag-exam' }, sub.name) : '', ' ' + (a.source || '출처 미상') + ' ' + (a.round ? a.round + '회' : '')]);
+      if (a.issue) titleRow.append(el('span', { class: 'tag tag-muted', style: 'margin-left:6px' }, '쟁점:' + a.issue));
       if (a.rater === 'ai') titleRow.append(el('span', { class: 'tag tag-warn', style: 'margin-left:6px' }, 'AI 미확정'));
+      if (unscored) titleRow.append(el('span', { class: 'tag tag-warn', style: 'margin-left:6px' }, '미채점'));
+      // 재작성이면 원본 대비 점수 변화 비교 (보고서 7쪽)
+      let compare = '';
+      if (a.rewriteOf) {
+        const orig = d.answers.find(function (x) { return x.id === a.rewriteOf; });
+        if (orig && !unscored) {
+          const diff = sum - scoreOf(orig);
+          compare = ' · 재작성 ' + (diff > 0 ? '▲+' + diff : diff < 0 ? '▼' + diff : '±0') + '점';
+        } else { compare = ' · 재작성'; }
+      }
+      const metaParts = [
+        a.date ? fmtDate(a.date) + ' · ' : '',
+        (max > 0 && !unscored) ? sum + '/' + max + '점 · ' : (unscored ? '채점 전 · ' : ''),
+        el('span', { class: 'tag tag-muted' }, raterLabel),
+        (a.errors && a.errors.length) ? ' · 감점: ' + a.errors.join(', ') : '',
+        compare,
+      ];
       list.append(el('div', { class: 'item', style: 'cursor:pointer', onclick: function () { openAnswerEditor(a, ctx); } }, [
-        el('div', { class: 'main' }, [titleRow, el('div', { class: 'meta' }, [a.date ? fmtDate(a.date) + ' · ' : '', max > 0 ? sum + '/' + max + '점 · ' : '', el('span', { class: 'tag tag-muted' }, raterLabel), (a.errors && a.errors.length) ? ' · 감점: ' + a.errors.join(', ') : '', a.rewriteOf ? ' · 재작성' : ''])]),
+        el('div', { class: 'main' }, [titleRow, el('div', { class: 'meta' }, metaParts)]),
       ]));
     });
     root.append(list);
@@ -847,12 +867,55 @@
     });
     const noteInput = el('textarea', { placeholder: '평가 메모 · 감점 위치 · 다음 보완 과업' }, a.note || '');
 
+    // 쟁점(issue) 연결 — 같은 과목+쟁점의 노트/과업/카드를 하나로 묶는 축 (보고서 7쪽)
+    const issueInput = el('input', { type: 'text', value: a.issue || '', placeholder: '예: 진보성 판단 / 상표 유사판단' });
+    const linkRow = el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;margin-top:8px' });
+    function rebuildLinkRow() {
+      linkRow.innerHTML = '';
+      const issue = issueInput.value.trim();
+      if (!issue) { linkRow.append(el('span', { class: 'hint' }, '쟁점을 입력하면 관련 노트 열기·보완 과업 만들기가 활성화됩니다.')); return; }
+      const subjectId = subjSel.value;
+      const relNote = Store.data().notes.find(function (n) { return n.subjectId === subjectId && n.issue && n.issue.trim() === issue; });
+      // 관련 노트: 있으면 열기, 없으면 생성
+      linkRow.append(el('button', { class: 'btn btn-sm', type: 'button', onclick: function () {
+        persist();                                   // 지금까지 입력 저장
+        if (relNote) { m.close(); openNoteById(relNote.id, ctx); }
+        else {
+          // 이 쟁점으로 새 노트 생성 후 열기
+          const nn = { id: Store.id('note'), title: issue, subjectId: subjectId, unit: '', issue: issue, importance: 2, status: 'todo', appliedDate: '', body: '', source: { ref: '', caseId: '', page: '', url: '', checkedDate: '' }, linkedAnswers: [a.id], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), versions: [] };
+          Store.update(function (dd) { dd.notes.push(nn); dd.lastOpenNote = nn.id; });
+          m.close(); openNoteById(nn.id, ctx); ctx.toast('이 쟁점의 노트를 만들었습니다.');
+        }
+      } }, relNote ? '관련 노트 열기 ▸' : '이 쟁점 노트 만들기 ▸'));
+      // 보완 과업 만들기
+      linkRow.append(el('button', { class: 'btn btn-sm', type: 'button', onclick: function () {
+        persist();
+        Store.update(function (dd) {
+          dd.tasks.push({ id: Store.id('task'), title: '[보완] ' + issue + (a.errors && a.errors.length ? ' (' + a.errors.join('/') + ')' : ''), subjectId: subjectId, area: '취약 쟁점', importance: 3, due: '', estMin: 60, status: 'todo', issue: issue, fromAnswer: a.id, createdAt: new Date().toISOString() });
+        });
+        ctx.toast('보완 과업을 만들었습니다. 주간 계획에서 시간을 확보하세요.');
+        rebuildLinkRow();
+      } }, '보완 과업 만들기'));
+      // 복습 카드 초안
+      linkRow.append(el('button', { class: 'btn btn-sm', type: 'button', onclick: function () {
+        persist();
+        Store.update(function (dd) {
+          dd.cards.push({ id: Store.id('card'), q: issue + ' — 핵심 요건/판시는?', a: '', subjectId: subjectId, noteId: (relNote ? relNote.id : null), issue: issue, status: 'draft', nextReview: todayKey(), interval: 1, reps: 0, verified: false, createdAt: new Date().toISOString() });
+        });
+        ctx.toast('복습 카드 초안을 만들었습니다. 복습 화면에서 답을 채우고 활성화하세요.');
+      } }, '복습 카드 초안'));
+    }
+    issueInput.oninput = rebuildLinkRow;
+    subjSel.addEventListener('change', rebuildLinkRow);
+    rebuildLinkRow();
+
     const body = el('div', {}, [
       el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '과목'), subjSel]), el('div', { class: 'field' }, [el('label', {}, '날짜'), dateInput])]),
       el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '출처'), sourceInput]), el('div', { class: 'field' }, [el('label', {}, '회차'), roundInput])]),
       el('div', { class: 'field' }, [el('label', {}, '평가자'), raterSel, el('p', { class: 'hint' }, 'AI 제안 점수는 확정 점수와 같은 선으로 합치지 않습니다.')]),
       el('div', { class: 'field' }, [el('label', {}, '문항별 배점 / 득점'), itemsWrap, totalEl, el('button', { class: 'btn btn-sm', style: 'margin-top:8px', type: 'button', onclick: function () { a.items.push({ label: (a.items.length + 1) + '문', score: 0, max: 0 }); renderItems(); } }, '+ 문항 추가')]),
       el('div', { class: 'field' }, [el('label', {}, '오류 분류'), errWrap]),
+      el('div', { class: 'field' }, [el('label', {}, '대상 쟁점 (학습 동선 연결)'), issueInput, linkRow]),
       el('div', { class: 'field' }, [el('label', {}, '평가 메모'), noteInput]),
     ]);
     const footer = [
@@ -864,11 +927,20 @@
     ];
     const m = ctx.modal({ title: isNew ? '연습 등록' : '답안 평가 편집', body: body, footer: footer });
 
-    function save() {
-      a.subjectId = subjSel.value; a.source = sourceInput.value.trim(); a.round = roundInput.value; a.date = dateInput.value; a.rater = raterSel.value; a.note = noteInput.value;
-      Store.update(function (dd) { if (isNew) { a.id = Store.id('ans'); dd.answers.push(a); } else Object.assign(dd.answers.find(function (x) { return x.id === a.id; }), a); });
-      m.close(); ctx.refresh(); ctx.toast('답안 기록을 저장했습니다.');
+    // 현재 입력 내용을 데이터에 반영(저장). 연결 버튼이 모달을 닫기 전에 호출.
+    function persist() {
+      a.subjectId = subjSel.value; a.source = sourceInput.value.trim(); a.round = roundInput.value;
+      a.date = dateInput.value; a.rater = raterSel.value; a.note = noteInput.value; a.issue = issueInput.value.trim();
+      if (a.scored === undefined) a.scored = true; // 일반 입력은 채점됨으로 간주(재작성만 미채점)
+      Store.update(function (dd) {
+        if (!a.id) { a.id = Store.id('ans'); dd.answers.push(a); }
+        else {
+          const ex = dd.answers.find(function (x) { return x.id === a.id; });
+          if (ex) Object.assign(ex, a); else dd.answers.push(a);
+        }
+      });
     }
+    function save() { persist(); m.close(); ctx.refresh(); ctx.toast('답안 기록을 저장했습니다.'); }
   }
   function markRewrite(orig, ctx, parentModal) {
     Store.update(function (dd) {
@@ -893,10 +965,36 @@
   const NOTE_STATUSES = [['todo', '미정리'], ['doing', '정리 중'], ['done', '검토 완료'], ['recheck', '재확인 필요']];
   let noteFilter = { subjectId: '', status: '', q: '' };
   let noteSelectedId = null;
+  // 복습 세션 중 원문을 열었을 때, 복습으로 복귀하기 위한 상태 (보고서 6·7쪽 P1)
+  let pendingReviewReturn = null; // { queueIds:[...], idx:number }
+  // 특정 노트를 지정해 노트 화면을 여는 헬퍼 (쟁점 ID 기반 직접 이동)
+  function openNoteById(noteId, ctx) {
+    if (noteId && Store.note(noteId)) {
+      noteSelectedId = noteId;
+      Store.update(function (dd) { dd.lastOpenNote = noteId; });
+    }
+    ctx.navigate('notes');
+  }
 
   function renderNotes(root, ctx) {
     const d = Store.data();
     noteSelectedId = noteSelectedId || d.lastOpenNote || (d.notes[0] && d.notes[0].id) || null;
+    // 복습 중 원문을 열어 온 경우: 복습 큐로 돌아가는 배너 (보고서 7쪽: 현재 위치 복원)
+    if (pendingReviewReturn) {
+      const ret = pendingReviewReturn;
+      root.append(el('div', { class: 'card', style: 'background:var(--exam-bg);display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px' }, [
+        el('span', { style: 'color:var(--exam-fg);font-weight:700' }, '복습을 보던 중입니다'),
+        el('span', { class: 'spacer' }),
+        el('button', { class: 'btn btn-sm', onclick: function () { pendingReviewReturn = null; ctx.refresh(); } }, '복습 종료'),
+        el('button', { class: 'btn btn-primary btn-sm', onclick: function () {
+          pendingReviewReturn = null;
+          const d2 = Store.data();
+          const queue = ret.queueIds.map(function (id) { return d2.cards.find(function (c) { return c.id === id; }); }).filter(Boolean);
+          ctx.navigate('review');
+          if (queue.length) startSession(queue, ctx, ret.idx);
+        } }, '복습으로 돌아가기 ▸' ),
+      ]));
+    }
     root.append(el('p', { class: 'page-intro' }, '작성일보다 과목·쟁점으로 찾기 쉽게. 원문·내 이해·확정하지 않은 생각을 구분하고 한 쟁점에 답안·복습·출처를 연결합니다.'));
 
     const layout = el('div', { class: 'grid', style: 'grid-template-columns: 340px 1fr; gap:16px' });
@@ -1092,8 +1190,8 @@
     Store.update(function (dd) { const x = dd.cards.find(function (z) { return z.id === c.id; }); x.status = 'active'; x.nextReview = todayKey(); });
     ctx.refresh(); ctx.toast('카드를 활성화했습니다.');
   }
-  function startSession(queue, ctx) {
-    let idx = 0;
+  function startSession(queue, ctx, startIdx) {
+    let idx = (typeof startIdx === 'number' && startIdx >= 0 && startIdx < queue.length) ? startIdx : 0;
     const body = el('div', {});
     const m = ctx.modal({ title: '복습 세션', body: body, footer: null });
     render();
@@ -1109,8 +1207,19 @@
       const startTs = Date.now();
       function reveal() {
         showBtn.remove();
+        const note = c.noteId ? Store.note(c.noteId) : null;
         answerBox.append(
-          el('div', { class: 'card' }, [el('div', { html: escapeHtml(c.a || '(답 미입력)').replace(/\n/g, '<br>') }), c.noteId ? el('button', { class: 'btn btn-sm', style: 'margin-top:8px', onclick: function () { m.close(); ctx.navigate('notes'); } }, '원문 노트 열기') : null]),
+          el('div', { class: 'card' }, [
+            el('div', { html: escapeHtml(c.a || '(답 미입력)').replace(/\n/g, '<br>') }),
+            note
+              ? el('button', { class: 'btn btn-sm', style: 'margin-top:8px', onclick: function () {
+                  // 복습 큐 상태를 저장해 두고, 카드가 가리키는 '정확한' 노트를 연다 (보고서 P1)
+                  pendingReviewReturn = { queueIds: queue.map(function (q) { return q.id; }), idx: idx };
+                  m.close();
+                  openNoteById(c.noteId, ctx);
+                } }, '원문 노트 열기 ▸ ' + (note.issue || note.title || '노트'))
+              : (c.noteId ? el('span', { class: 'hint' }, '(연결된 원문 노트를 찾을 수 없습니다)') : null),
+          ]),
           el('p', { class: 'hint', style: 'margin:12px 0 6px' }, '자기 평가'),
           el('div', { class: 'row', style: 'gap:8px' }, [gradeBtn('다시 학습', 0), gradeBtn('어려움', 1), gradeBtn('보통', 2), gradeBtn('쉬움', 3)])
         );
