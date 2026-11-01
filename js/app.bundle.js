@@ -731,7 +731,18 @@
       summaryStat('확보', fmtMin(securedMin), 'var(--exam-fg)'),
       summaryStat('미확보', fmtMin(shortMin), shortMin > 0 ? 'var(--warn-fg)' : 'var(--text-sub)'),
     ]));
-    if (shortMin > 0) head.append(el('p', { class: 'hint', style: 'margin-top:8px;color:var(--warn-fg)' }, '목표까지 ' + fmtMin(shortMin) + ' 부족합니다. 수면/마감을 줄여 성공처럼 보이게 하지 않습니다 — 범위 축소·과업 분할·목표 조정을 고려하세요.'));
+    if (shortMin > 0) {
+      // 상황 + 행동만 간결하게 (보고서 8쪽: 압박성 문구 대신 현재 상태와 다음 행동)
+      head.append(el('div', { class: 'row', style: 'margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center' }, [
+        el('span', { style: 'color:var(--warn-fg);font-weight:600' }, '이번 주 수험 시간이 ' + fmtMin(shortMin) + ' 부족해요'),
+        el('button', { class: 'btn btn-sm', onclick: function () { openBlockEditor(null, ctx, weekDates); } }, '빈 시간에 공부 넣기'),
+      ]));
+      // 원칙 설명은 도움말로 (평소엔 접힘)
+      head.append(el('details', { style: 'margin-top:6px' }, [
+        el('summary', { class: 'hint', style: 'cursor:pointer' }, '부족할 때 어떻게 하나요?'),
+        el('p', { class: 'hint', style: 'margin:6px 0 0' }, '수면·이동·마감을 줄여 억지로 채우지 않습니다. 범위 축소, 과업 분할, 목표 조정 중에서 고르세요. 미확보 시간은 숨기지 않고 그대로 보여 줍니다.'),
+      ]));
+    }
     root.append(head);
 
     const grid = el('div', { class: 'grid grid-7to3' });
@@ -1088,6 +1099,7 @@
   let noteSelectedId = null;
   // 복습 세션 중 원문을 열었을 때, 복습으로 복귀하기 위한 상태 (보고서 6·7쪽 P1)
   let pendingReviewReturn = null; // { queueIds:[...], idx:number }
+  let noteEditMode = false;        // 노트: false=읽기 모드(기본), true=편집 모드 (보고서 9쪽)
   // 특정 노트를 지정해 노트 화면을 여는 헬퍼 (쟁점 ID 기반 직접 이동)
   function openNoteById(noteId, ctx) {
     if (noteId && Store.note(noteId)) {
@@ -1178,6 +1190,7 @@
     const n = { id: Store.id('note'), title: '새 쟁점 노트', subjectId: d.subjects[0] && d.subjects[0].id, unit: '', issue: '', importance: 2, status: 'todo', appliedDate: '', body: '', source: { ref: '', caseId: '', page: '', url: '', checkedDate: '' }, linkedAnswers: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), versions: [] };
     Store.update(function (dd) { dd.notes.push(n); dd.lastOpenNote = n.id; });
     noteSelectedId = n.id;
+    noteEditMode = true; // 새 노트는 바로 편집 모드로
     ctx.refresh();
   }
 
@@ -1239,11 +1252,47 @@
     const checked = el('input', { type: 'date', value: src.checkedDate || '' });
     [ref, caseId, page, url, checked].forEach(function (inp) { inp.oninput = inp.onchange = function () { n.source = { ref: ref.value, caseId: caseId.value, page: page.value, url: url.value, checkedDate: checked.value }; touch(); }; });
 
-    wrap.append(
-      el('div', { class: 'row between', style: 'margin-bottom:12px' }, [saveStatus, el('div', { class: 'row', style: 'gap:8px' }, [
+    // 공통 상단 바 (저장상태 + 모드 토글 + 액션)
+    const modeBtn = el('button', { class: 'btn btn-sm' + (noteEditMode ? '' : ' btn-primary'), onclick: function () { noteEditMode = !noteEditMode; refreshDetail(); } }, noteEditMode ? '읽기로' : '편집');
+    const topBar = el('div', { class: 'row between', style: 'margin-bottom:12px' }, [
+      saveStatus,
+      el('div', { class: 'row', style: 'gap:8px' }, [
+        modeBtn,
         el('button', { class: 'btn btn-sm', onclick: function () { makeCardFromNote(n, ctx); } }, '복습 카드 생성'),
         el('button', { class: 'btn btn-sm btn-danger', onclick: async function () { if (await ctx.confirm('이 노트를 삭제할까요?', { danger: true, okText: '삭제' })) { Store.update(function (dd) { dd.notes = dd.notes.filter(function (x) { return x.id !== n.id; }); dd.lastOpenNote = null; }); noteSelectedId = null; refreshDetail(); refreshList(); ctx.toast('노트를 삭제했습니다.'); } } }, '삭제'),
-      ])]),
+      ]),
+    ]);
+
+    if (!noteEditMode) {
+      // ── 읽기 모드: 제목·경로·본문 우선, 메타/원문은 접어 둠 (보고서 9쪽) ──
+      const bodyHtml = n.body ? escapeHtml(n.body).replace(/\n/g, '<br>') : '<span class="hint">본문이 비어 있습니다. "편집"을 눌러 작성하세요.</span>';
+      const srcLines = [];
+      if (src.ref) srcLines.push('문헌: ' + src.ref);
+      if (src.caseId) srcLines.push('판례: ' + src.caseId);
+      if (src.page) srcLines.push('쪽수: ' + src.page);
+      if (src.checkedDate) srcLines.push('확인일: ' + src.checkedDate);
+      const statLabel = (NOTE_STATUSES.find(function (p) { return p[0] === n.status; }) || [, '미정리'])[1];
+      wrap.append(
+        topBar,
+        el('h2', { style: 'font-size:1.4rem;margin-bottom:4px' }, n.title || '(제목 없음)'),
+        breadcrumb,
+        el('div', { class: 'row', style: 'gap:6px;margin-bottom:12px;flex-wrap:wrap' }, [
+          el('span', { class: 'tag tag-muted' }, statLabel),
+          n.appliedDate ? el('span', { class: 'hint' }, '적용 기준일 ' + n.appliedDate) : '',
+        ]),
+        el('div', { class: 'note-read', style: 'font-size:1.08rem;line-height:1.9;max-width:62ch', html: bodyHtml }),
+        (srcLines.length || src.url) ? el('details', { style: 'margin-top:16px' }, [
+          el('summary', { class: 'hint', style: 'cursor:pointer' }, '원문 근거'),
+          el('p', { class: 'hint', style: 'margin:6px 0 0' }, srcLines.join(' · ')),
+          src.url ? el('p', { style: 'margin:4px 0 0' }, el('a', { href: src.url, target: '_blank', rel: 'noopener' }, '원문 열기 ↗')) : null,
+        ]) : null,
+      );
+      return wrap;
+    }
+
+    // ── 편집 모드: 전체 폼 ──
+    wrap.append(
+      topBar,
       title, breadcrumb,
       el('div', { class: 'field-row', style: 'margin-top:12px' }, [el('div', { class: 'field' }, [el('label', {}, '과목'), subjSel]), el('div', { class: 'field' }, [el('label', {}, '대단원'), unit])]),
       el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '쟁점'), issue]), el('div', { class: 'field' }, [el('label', {}, '상태'), statSel])]),
@@ -1821,6 +1870,13 @@
     Timer.resumeIfActive();
     window.addEventListener('timer:changed', function () { refresh(); });
     window.addEventListener('hashchange', onHashChange);
+    // Ctrl/Cmd+K: 전체 검색 열기 (보고서 10쪽: 검색·빠른 생성 단축 경로)
+    window.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        if (!document.querySelector('.modal-backdrop')) openSearch('');
+      }
+    });
     maybeOnboard();
     setupCloud();
   }
