@@ -703,6 +703,147 @@
   /* =======================================================================
      7. 주간 계획 (보고서 8·9쪽)
      ======================================================================= */
+  // --- 묶음 D: 반복 수업 시간표 연결 · 빈 시간 제안 ------------------------
+  // 과목 schedule → 해당 주의 고정 수업(acad) 블록 목록. 저장은 하지 않고 "있어야 할" 블록만 계산.
+  function recurringClassBlocks(d, weekDates) {
+    const out = [];
+    (d.courses || []).forEach(function (c) {
+      (c.schedule || []).forEach(function (s) {
+        if (s.day == null || !s.start || !s.end) return;
+        const date = weekDates[s.day];
+        if (!date) return;
+        out.push({
+          courseId: c.id, title: c.name || '수업', day: s.day, date: date,
+          start: date + 'T' + s.start + ':00', end: date + 'T' + s.end + ':00',
+          source: 'course',
+        });
+      });
+    });
+    return out;
+  }
+  // 아직 시간표에 반영되지 않은 반복 수업(동일 날짜·시작·종료의 블록이 없는 것)만 추림.
+  function pendingClassBlocks(d, weekDates) {
+    const existing = d.blocks.filter(function (b) { return weekDates.indexOf(b.date) >= 0; });
+    return recurringClassBlocks(d, weekDates).filter(function (rc) {
+      return !existing.some(function (b) {
+        return b.date === rc.date && b.start.slice(11, 16) === rc.start.slice(11, 16) && b.end.slice(11, 16) === rc.end.slice(11, 16)
+          && (b.courseId === rc.courseId || blockKind(d, b) === 'acad');
+      });
+    });
+  }
+  // 하루 활동 가능 구간 안에서, 기존 블록을 피한 빈 구간을 찾아 수험용으로 제안.
+  // bounds: {startH, endH, minSlotMin}. 과거 시간은 제외(오늘이면 현재 이후만).
+  function findFreeSlots(d, weekDates, bounds) {
+    bounds = bounds || {};
+    const startH = bounds.startH != null ? bounds.startH : 9;
+    const endH = bounds.endH != null ? bounds.endH : 22;
+    const minSlot = bounds.minSlotMin != null ? bounds.minSlotMin : 45;
+    const now = new Date();
+    const slots = [];
+    weekDates.forEach(function (k) {
+      const dayStart = new Date(k + 'T' + String(startH).padStart(2, '0') + ':00:00');
+      const dayEnd = new Date(k + 'T' + String(endH).padStart(2, '0') + ':00:00');
+      let cursor = dayStart;
+      if (k < todayKey()) return;              // 지난 날은 제안하지 않음
+      if (k === todayKey() && now > cursor) {  // 오늘은 현재 시각 이후만
+        cursor = new Date(Math.ceil(now.getTime() / (15 * 60000)) * (15 * 60000)); // 15분 단위 올림
+      }
+      // 해당 날짜의 모든 블록(수업·수험·기타) + 아직 반영 안 된 반복 수업까지 장애물로 간주
+      const obstacles = d.blocks.filter(function (b) { return b.date === k; })
+        .concat(pendingClassBlocks(d, weekDates).filter(function (b) { return b.date === k; }))
+        .map(function (b) { return { s: new Date(b.start), e: new Date(b.end) }; })
+        .filter(function (o) { return o.e > cursor && o.s < dayEnd; })
+        .sort(function (a, b) { return a.s - b.s; });
+      obstacles.forEach(function (o) {
+        if (o.s > cursor) {
+          const gapMin = (Math.min(o.s, dayEnd) - cursor) / 60000;
+          if (gapMin >= minSlot) slots.push({ date: k, start: new Date(cursor), end: new Date(Math.min(o.s, dayEnd)), min: gapMin });
+        }
+        if (o.e > cursor) cursor = o.e;
+      });
+      if (dayEnd > cursor) {
+        const gapMin = (dayEnd - cursor) / 60000;
+        if (gapMin >= minSlot) slots.push({ date: k, start: new Date(cursor), end: dayEnd, min: gapMin });
+      }
+    });
+    return slots.sort(function (a, b) { return b.min - a.min; }); // 큰 빈 시간 우선
+  }
+
+  // 아직 반영 안 된 반복 수업을 이번 주 고정 수업(acad) 블록으로 한 번에 추가.
+  function applyRecurringClasses(d, weekDates, ctx) {
+    const pending = pendingClassBlocks(d, weekDates);
+    if (pending.length === 0) { ctx.toast('이미 모든 수업이 시간표에 반영돼 있어요.'); return; }
+    Store.update(function (dd) {
+      pending.forEach(function (rc) {
+        dd.blocks.push({
+          id: Store.id('blk'), title: rc.title, kind: 'acad', subjectId: '', taskId: '',
+          courseId: rc.courseId, date: rc.date, start: rc.start, end: rc.end, locked: false, source: 'course',
+        });
+      });
+    });
+    ctx.refresh();
+    ctx.toast(pending.length + '개 수업을 시간표에 반영했어요.');
+  }
+
+  // 빈 시간 제안 모달: 부족분을 채울 수 있는 빈 구간을 큰 순서로 보여 주고, 한 번에 수험 블록으로 추가.
+  function openFreeSlotSuggest(ctx, weekDates, shortMin) {
+    const d = Store.data();
+    const slots = findFreeSlots(d, weekDates, { startH: 9, endH: 22, minSlotMin: 45 });
+    const body = el('div', { class: 'stack' });
+    if (shortMin > 0) body.append(el('p', { class: 'hint' }, '이번 주 수험 시간이 ' + fmtMin(shortMin) + ' 부족해요. 아래 빈 시간 중에서 골라 수험 블록으로 넣을 수 있어요.'));
+    else body.append(el('p', { class: 'hint' }, '남는 빈 시간을 수험 블록으로 채울 수 있어요.'));
+
+    if (slots.length === 0) {
+      body.append(el('div', { class: 'empty', style: 'padding:24px 0' }, [el('h3', {}, '남는 빈 시간이 없어요'), el('p', {}, '활동 시간(09–22시) 안에 45분 이상 비는 구간이 없습니다. 수업·이동 블록을 조정하거나 목표를 낮춰 보세요.')]));
+      const m0 = ctx.modal({ title: '빈 시간 제안', body: body, footer: [el('button', { class: 'btn btn-primary', onclick: function () { m0.close(); } }, '닫기')] });
+      return;
+    }
+
+    const picked = new Set();
+    let pickedMin = 0;
+    const totalLabel = el('div', { class: 'hint', style: 'margin:4px 0 8px;font-weight:600' });
+    function refreshLabel() {
+      totalLabel.textContent = '선택한 빈 시간: ' + fmtMin(pickedMin) + (shortMin > 0 ? ' / 부족 ' + fmtMin(shortMin) : '');
+      totalLabel.style.color = (shortMin > 0 && pickedMin >= shortMin) ? 'var(--exam-fg)' : 'var(--text-sub)';
+    }
+    refreshLabel();
+    body.append(totalLabel);
+
+    const list = el('div', { class: 'list' });
+    slots.forEach(function (sl, i) {
+      const wd = WEEKDAYS[weekDates.indexOf(sl.date)] || '';
+      const label = wd + '요일 ' + sl.date.slice(5) + ' · ' + fmtTime(sl.start) + '~' + fmtTime(sl.end) + ' (' + fmtMin(sl.min) + ')';
+      const cb = el('input', { type: 'checkbox', style: 'width:20px;min-height:20px' });
+      cb.addEventListener('change', function () {
+        if (cb.checked) { picked.add(i); pickedMin += sl.min; } else { picked.delete(i); pickedMin -= sl.min; }
+        refreshLabel();
+      });
+      list.append(el('label', { class: 'item', style: 'cursor:pointer;align-items:center' }, [cb, el('div', { class: 'main' }, [el('div', { class: 'title' }, label)])]));
+    });
+    body.append(list);
+
+    const m = ctx.modal({
+      title: '빈 시간 제안', body: body, footer: [
+        el('span', { class: 'spacer' }),
+        el('button', { class: 'btn', onclick: function () { m.close(); } }, '취소'),
+        el('button', { class: 'btn btn-primary', onclick: function () {
+          if (picked.size === 0) { ctx.toast('채울 빈 시간을 선택하세요.', 'warn'); return; }
+          Store.update(function (dd) {
+            picked.forEach(function (i) {
+              const sl = slots[i];
+              dd.blocks.push({ id: Store.id('blk'), title: '수험 공부', kind: 'exam', subjectId: '', taskId: '', date: sl.date, start: toLocalIso(sl.start), end: toLocalIso(sl.end), locked: false });
+            });
+          });
+          m.close(); ctx.refresh(); ctx.toast(picked.size + '개 수험 블록을 추가했어요.');
+        } }, '선택한 시간에 수험 넣기'),
+      ]
+    });
+  }
+  function toLocalIso(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+      + 'T' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':00';
+  }
+
   let weekOffset = 0;
   function renderWeek(root, ctx) {
     const d = Store.data();
@@ -735,7 +876,7 @@
       // 상황 + 행동만 간결하게 (보고서 8쪽: 압박성 문구 대신 현재 상태와 다음 행동)
       head.append(el('div', { class: 'row', style: 'margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center' }, [
         el('span', { style: 'color:var(--warn-fg);font-weight:600' }, '이번 주 수험 시간이 ' + fmtMin(shortMin) + ' 부족해요'),
-        el('button', { class: 'btn btn-sm', onclick: function () { openBlockEditor(null, ctx, weekDates); } }, '빈 시간에 공부 넣기'),
+        el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openFreeSlotSuggest(ctx, weekDates, shortMin); } }, '빈 시간 제안 받기'),
       ]));
       // 원칙 설명은 도움말로 (평소엔 접힘)
       head.append(el('details', { style: 'margin-top:6px' }, [
@@ -752,8 +893,31 @@
     grid.append(planCol);
 
     const side = el('div', { class: 'stack' });
+
+    // 묶음 D: 반복 수업 자동 반영
+    const pendingClasses = pendingClassBlocks(d, weekDates);
+    const classCard = el('div', { class: 'card' });
+    const classHead = el('div', { class: 'row between' }, [el('h3', { style: 'margin:0' }, '반복 수업')]);
+    classCard.append(classHead);
+    if ((d.courses || []).some(function (c) { return (c.schedule || []).length; })) {
+      if (pendingClasses.length) {
+        classCard.append(
+          el('p', { class: 'hint', style: 'margin:6px 0' }, '이번 주에 아직 반영 안 된 수업이 ' + pendingClasses.length + '개 있어요.'),
+          el('button', { class: 'btn btn-sm btn-primary btn-block', onclick: function () { applyRecurringClasses(d, weekDates, ctx); } }, '수업 ' + pendingClasses.length + '개 시간표에 반영')
+        );
+      } else {
+        classCard.append(el('p', { class: 'hint', style: 'margin:6px 0 0' }, '등록된 수업이 이번 주 시간표에 모두 반영돼 있어요.'));
+      }
+    } else {
+      classCard.append(el('p', { class: 'hint', style: 'margin:6px 0' }, '대학 학업에서 과목의 반복 수업 시간을 등록하면, 이번 주 시간표에 자동으로 넣어드려요.'),
+        el('button', { class: 'btn btn-sm btn-block', onclick: function () { ctx.navigate('academic'); } }, '수강 과목 등록하러 가기'));
+    }
+    side.append(classCard);
+
     const addCard = el('div', { class: 'card' });
-    addCard.append(el('h3', {}, '시간표에 블록 추가'), el('p', { class: 'hint' }, '드래그 대신 날짜·시간 입력으로도 추가합니다.'), el('button', { class: 'btn btn-primary btn-block', onclick: function () { openBlockEditor(null, ctx, weekDates); } }, '+ 계획 블록 추가'));
+    addCard.append(el('h3', {}, '시간표에 블록 추가'), el('p', { class: 'hint' }, '드래그 대신 날짜·시간 입력으로도 추가합니다.'),
+      el('button', { class: 'btn btn-primary btn-block', onclick: function () { openBlockEditor(null, ctx, weekDates); } }, '+ 계획 블록 추가'),
+      el('button', { class: 'btn btn-block', style: 'margin-top:8px', onclick: function () { openFreeSlotSuggest(ctx, weekDates, shortMin); } }, '빈 시간 제안 받기'));
     side.append(addCard);
 
     const unCard = el('div', { class: 'card' });
