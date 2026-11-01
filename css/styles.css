@@ -14,6 +14,7 @@
   --text-sub:      #5E6D62; /* 보조 문구 */
   --accent:        #234B3F; /* 핵심 행동 */
   --accent-strong: #1b3a31;
+  --on-accent:     #ffffff; /* accent 배경 위 문자색 (밝은 테마: 흰색) */
 
   /* 수험 영역 */
   --exam-bg:   #E8F0E5;
@@ -51,6 +52,7 @@
   --text-sub:      #a7b5aa;
   --accent:        #6fbf9a;
   --accent-strong: #84cfab;
+  --on-accent:     #16201b; /* 밝은 녹색 버튼 위 진한 문자 → 대비 약 7.6:1 (보고서 9쪽) */
   --exam-bg:   #22352a; --exam-fg:   #bfe3c3;
   --acad-bg:   #352c1d; --acad-fg:   #e3c98f;
   --warn-bg:   #3a241f; --warn-fg:   #e8a593;
@@ -99,7 +101,7 @@ a { color: var(--accent); }
 
 .skip-link {
   position: absolute; left: var(--s4); top: -60px;
-  background: var(--accent); color: #fff; padding: var(--s3) var(--s4);
+  background: var(--accent); color: var(--on-accent); padding: var(--s3) var(--s4);
   border-radius: var(--radius); z-index: 100; transition: top .15s;
 }
 .skip-link:focus { top: var(--s4); }
@@ -166,7 +168,10 @@ a { color: var(--accent); }
   color: var(--exam-fg);
   font-weight: 700;
 }
-.nav-item .ico { width: 20px; text-align: center; flex: none; }
+.nav-item .ico { width: 20px; height: 20px; flex: none; display: inline-flex; align-items: center; justify-content: center; color: var(--text-sub); }
+.nav-item[aria-current="page"] .ico { color: var(--exam-fg); }
+.nav-item .ico svg { display: block; }
+.search-box .ico { color: var(--text-sub); }
 .nav-item.secondary { color: var(--text-sub); font-size: .9rem; }
 
 .sidebar-footer {
@@ -244,7 +249,7 @@ a { color: var(--accent); }
 }
 .btn:hover { background: var(--bg); }
 .btn-primary {
-  background: var(--accent); color: #fff; border-color: var(--accent);
+  background: var(--accent); color: var(--on-accent); border-color: var(--accent);
 }
 .btn-primary:hover { background: var(--accent-strong); }
 .btn-lg { min-height: 52px; padding: 0 var(--s6); font-size: 1.05rem; }
@@ -415,7 +420,7 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.7; }
   border: 1px solid var(--border-strong); background: var(--surface);
   font-size: .85rem; font-weight: 600; cursor: pointer; font-family: inherit; color: var(--text);
 }
-.pill[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.pill[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 
 .divider { height: 1px; background: var(--border); margin: var(--s5) 0; border: none; }
 

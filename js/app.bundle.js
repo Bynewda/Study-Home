@@ -36,6 +36,27 @@
     });
   }
 
+  // 단색 선 아이콘 (보고서 8·9쪽: 색 이모지 대신 통일된 1-color 라인 아이콘, currentColor 상속)
+  const ICON_PATHS = {
+    home:   '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
+    week:   '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
+    tasks:  '<path d="M4 12l5 5L20 6"/>',
+    answers:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    notes:  '<path d="M4 4h12l4 4v12H4z"/><path d="M16 4v4h4M8 13h8M8 17h5"/>',
+    review: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v5h-5"/>',
+    academic:'<path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 3 2.5 6 2.5S18 18 18 17v-5"/>',
+    log:    '<path d="M4 20V4"/><path d="M4 20h16"/><rect x="7" y="11" width="3" height="6"/><rect x="12" y="7" width="3" height="10"/><rect x="17" y="13" width="3" height="4"/>',
+    inbox:  '<path d="M4 13l2-8h12l2 8v5H4z"/><path d="M4 13h5l1 2h4l1-2h5"/>',
+    settings:'<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1l-.3-2.5H9.4l-.3 2.5a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.3 2.5h4.2l.3-2.5a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5c.07-.3.1-.7.1-1z"/>',
+    logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  };
+  function svgIcon(name) {
+    const span = el('span', { class: 'ico', 'aria-hidden': 'true' });
+    span.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + (ICON_PATHS[name] || '') + '</svg>';
+    return span;
+  }
+
   function todayKey(d) { d = d || new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function dayKey(d) { return todayKey(d); }
   function parseKey(k) { const p = k.split('-').map(Number); return new Date(p[0], p[1] - 1, p[2]); }
@@ -1629,22 +1650,22 @@
     const sidebar = el('aside', { class: 'sidebar', id: 'sidebar', 'aria-label': '주 메뉴' });
     sidebar.append(el('div', { class: 'brand' }, ['나의 수험 공간', el('small', {}, '변리사 2차 · 2027')]));
     const nav = el('nav', { class: 'nav' });
-    function navItem(parent, route, label, icon) { parent.append(el('button', { class: 'nav-item', 'data-route': route, onclick: function () { navigate(route); } }, [el('span', { class: 'ico' }, icon), label])); }
-    navItem(nav, 'home', '오늘의 수험', '📌');
-    navItem(nav, 'week', '주간 계획', '🗓');
-    navItem(nav, 'tasks', '과업', '✅');
+    function navItem(parent, route, label, icon) { parent.append(el('button', { class: 'nav-item', 'data-route': route, onclick: function () { navigate(route); } }, [svgIcon(icon), label])); }
+    navItem(nav, 'home', '오늘의 수험', 'home');
+    navItem(nav, 'week', '주간 계획', 'week');
+    navItem(nav, 'tasks', '과업', 'tasks');
     nav.append(el('div', { class: 'nav-group-label' }, '학습'));
-    navItem(nav, 'answers', '실전 답안과 GS', '✍️');
-    navItem(nav, 'notes', '단권화 노트', '📒');
-    navItem(nav, 'review', '복습', '🔁');
+    navItem(nav, 'answers', '실전 답안과 GS', 'answers');
+    navItem(nav, 'notes', '단권화 노트', 'notes');
+    navItem(nav, 'review', '복습', 'review');
     nav.append(el('div', { class: 'nav-group-label' }, '보조'));
-    navItem(nav, 'academic', '대학 학업', '🎓');
-    navItem(nav, 'log', '기록과 회고', '📊');
+    navItem(nav, 'academic', '대학 학업', 'academic');
+    navItem(nav, 'log', '기록과 회고', 'log');
     sidebar.append(nav);
     const footer = el('div', { class: 'sidebar-footer' });
     footer.append(
-      el('button', { class: 'nav-item secondary', onclick: openInbox }, [el('span', { class: 'ico' }, '📥'), '빠른 수집함']),
-      el('button', { class: 'nav-item secondary', 'data-route': 'settings', onclick: function () { navigate('settings'); } }, [el('span', { class: 'ico' }, '⚙️'), '설정과 백업']),
+      el('button', { class: 'nav-item secondary', onclick: openInbox }, [svgIcon('inbox'), '빠른 수집함']),
+      el('button', { class: 'nav-item secondary', 'data-route': 'settings', onclick: function () { navigate('settings'); } }, [svgIcon('settings'), '설정과 백업']),
       el('div', { id: 'cloud-box', style: 'border-top:1px solid var(--border);margin-top:6px;padding-top:6px' }),
       el('div', { class: 'save-status', id: 'save-status', style: 'padding:8px 12px' }, '자동 저장 켜짐')
     );
@@ -1659,8 +1680,8 @@
       el('div', { class: 'topbar-inner' }, [
         el('button', { class: 'btn btn-sm menu-toggle', 'aria-label': '메뉴 열기', onclick: function () { sidebar.classList.toggle('open'); scrim.classList.toggle('show'); } }, '☰'),
         el('h1', { id: 'page-title' }, '오늘의 수험'),
-        el('div', { class: 'search-box' }, [el('span', {}, '🔍'), searchInput]),
-        el('button', { class: 'btn btn-sm', onclick: openInbox, title: '빠른 수집' }, '📥'),
+        el('div', { class: 'search-box' }, [svgIcon('search'), searchInput]),
+        el('button', { class: 'btn btn-sm', onclick: openInbox, title: '빠른 수집', 'aria-label': '빠른 수집' }, [svgIcon('inbox')]),
       ]),
     ]);
     const focusBanner = el('div', { class: 'focus-banner', id: 'focus-banner' });
@@ -1748,7 +1769,7 @@
             el('div', { class: 'hint', style: 'font-size:.72rem' }, '여러 기기 동기화 중'),
           ]),
         ]),
-        el('button', { class: 'nav-item secondary', style: 'min-height:36px', onclick: function () { window.StudyCloud.logout(); } }, [el('span', { class: 'ico' }, '🚪'), '로그아웃']),
+        el('button', { class: 'nav-item secondary', style: 'min-height:36px', onclick: function () { window.StudyCloud.logout(); } }, [svgIcon('logout'), '로그아웃']),
       );
     } else {
       box.append(
