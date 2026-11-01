@@ -19,5 +19,18 @@
 
   <!-- 단일 번들 — file:// 로 더블클릭해서 바로 열 수 있습니다 (서버 불필요) -->
   <script src="js/app.bundle.js"></script>
+
+  <!-- Firebase 설정값 (구글 로그인 + 기기 간 실시간 동기화) -->
+  <!-- 설정값이 null 이면 클라우드 기능은 자동으로 꺼지고, 앱은 평소처럼 로컬 저장으로 동작합니다. -->
+  <script src="js/firebase-config.js"></script>
+  <!-- GitHub Pages(https) 에서만 Firebase 모듈 로드. file:// 로컬에서는 CORS로 막히므로 건너뜀 -->
+  <script>
+    if (location.protocol === 'http:' || location.protocol === 'https:') {
+      var s = document.createElement('script');
+      s.type = 'module';
+      s.src = 'js/firebase-sync.js';
+      document.head.appendChild(s);
+    }
+  </script>
 </body>
 </html>

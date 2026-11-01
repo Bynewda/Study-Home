@@ -104,7 +104,7 @@
      2. STORE — localStorage 기반 저장소 + 백업/복원 (보고서 18·19쪽)
      ======================================================================= */
   const STORAGE_KEY = 'patent-study-home:v1';
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
 
   function defaultData() {
     return {
@@ -112,7 +112,7 @@
       settings: {
         examDate: null, examDateConfirmed: false,
         electiveSubject: '디자인보호법', weeklyExamGoalH: 30,
-        theme: 'light', createdAt: new Date().toISOString(), onboarded: false,
+        theme: 'light', readingWide: false, createdAt: new Date().toISOString(), onboarded: false,
       },
       subjects: [
         { id: 'sub-patent', name: '특허법', kind: 'exam', color: '#355B36' },
@@ -123,6 +123,9 @@
       tasks: [], blocks: [], sessions: [], notes: [], answers: [],
       cards: [], courses: [], assignments: [], inbox: [], focusToday: [],
       reviews: [], retros: {}, lastOpenNote: null,
+      // 주간 기준 계획(확정 목표) 보관: { 'YYYY-MM-DD(월요일)': { planMin, confirmedAt } }
+      // 계획을 줄여도 이행률이 부풀려지지 않도록 '최초 확정'을 분리 보관 (보고서 6쪽)
+      baselinePlans: {},
     };
   }
 
@@ -143,7 +146,12 @@
     }
     function save() { clearTimeout(_saveTimer); _saveTimer = setTimeout(commit, 400); }
     function commit() {
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_data)); _lastSaveAt = new Date(); _saveFailed = false; }
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(_data));
+        _lastSaveAt = new Date(); _saveFailed = false;
+        // 실제 저장 성공을 알림 → 화면의 "저장됨" 표시는 이 이벤트 이후에만 (보고서 4쪽 P0)
+        window.dispatchEvent(new CustomEvent('store:saved', { detail: { at: _lastSaveAt } }));
+      }
       catch (e) { _saveFailed = true; console.error('저장 실패', e); window.dispatchEvent(new CustomEvent('store:save-failed', { detail: e })); }
       emit();
     }
@@ -155,8 +163,17 @@
       loadError: function () { return _loadError; },
       saveInfo: function () { return { at: _lastSaveAt, failed: _saveFailed }; },
       subscribe: function (fn) { _listeners.add(fn); return function () { _listeners.delete(fn); }; },
-      update: function (m) { m(_data); save(); emit(); },
+      update: function (m) { m(_data); _data.updatedAt = new Date().toISOString(); save(); emit(); },
       commitNow: commit,
+      // 외부(클라우드)에서 받은 전체 데이터로 교체. silent=true면 다시 클라우드로 올리지 않도록 이벤트만 다르게.
+      replaceAll: function (incoming, opts) {
+        opts = opts || {};
+        _data = migrate(incoming);
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_data)); _lastSaveAt = new Date(); } catch (e) {}
+        if (opts.fromCloud) { _data.__fromCloud = true; }
+        emit();
+        if (_data.__fromCloud) { delete _data.__fromCloud; }
+      },
       id: function (p) { return (p || 'id') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); },
       subject: function (id) { return _data.subjects.find(function (s) { return s.id === id; }) || null; },
       task: function (id) { return _data.tasks.find(function (t) { return t.id === id; }) || null; },
@@ -164,21 +181,60 @@
       exportJSON: function () {
         return JSON.stringify({ app: 'patent-study-home', schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(), data: _data }, null, 2);
       },
+      // 백업 파일 검증 (보고서 4쪽: 검증 단계). 문제가 있으면 상세 메시지와 함께 throw.
+      validateImport: function (text) {
+        let parsed;
+        try { parsed = JSON.parse(text); }
+        catch (e) { throw new Error('JSON 형식이 아닙니다. 올바른 백업 파일인지 확인하세요.'); }
+        const incoming = parsed.data || parsed;
+        if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw new Error('데이터 구조가 올바르지 않습니다.');
+        // 앱 식별자(있으면) 확인
+        if (parsed.app && parsed.app !== 'patent-study-home') throw new Error('다른 앱의 백업 파일로 보입니다 (app=' + parsed.app + ').');
+        // 컬렉션은 배열이어야 함
+        const cols = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','inbox','reviews','subjects'];
+        const issues = [];
+        cols.forEach(function (c) {
+          if (incoming[c] != null && !Array.isArray(incoming[c])) issues.push(c + ' 필드가 목록이 아님');
+          (incoming[c] || []).forEach(function (x, i) {
+            if (x == null || typeof x !== 'object') issues.push(c + '[' + i + '] 항목 형식 오류');
+            else if (!x.id) issues.push(c + '[' + i + '] id 누락');
+          });
+        });
+        if (issues.length) throw new Error('검증 실패: ' + issues.slice(0, 5).join(', ') + (issues.length > 5 ? ' 외 ' + (issues.length - 5) + '건' : ''));
+        // 미리보기용 건수 요약
+        const summary = {};
+        cols.forEach(function (c) { summary[c] = (incoming[c] || []).length; });
+        return { incoming: incoming, schemaVersion: parsed.schemaVersion || incoming.schemaVersion || 1, summary: summary };
+      },
       importJSON: function (text, mode) {
         mode = mode || 'replace';
-        const parsed = JSON.parse(text);
-        const incoming = parsed.data || parsed;
-        if (!incoming || typeof incoming !== 'object') throw new Error('형식이 올바르지 않습니다.');
-        if (mode === 'replace') { _data = migrate(incoming); }
+        const v = this.validateImport(text);           // 검증 (실패 시 throw)
+        const incoming = v.incoming;
+        // 보호: 교체 전 현재 데이터 스냅샷을 임시 키에 보관 (보고서 4쪽: 보호 단계)
+        try { localStorage.setItem(STORAGE_KEY + ':pre-import', JSON.stringify(_data)); } catch (e) {}
+        // 적용: 임시로 만든 새 상태를 검증 후 전환 (원자적 교체)
+        let next;
+        if (mode === 'replace') { next = migrate(incoming); }
         else {
-          const merged = migrate(_data);
-          ['tasks', 'blocks', 'sessions', 'notes', 'answers', 'cards', 'courses', 'assignments', 'inbox', 'reviews', 'subjects'].forEach(function (c) {
-            const seen = new Set((merged[c] || []).map(function (x) { return x.id; }));
-            (incoming[c] || []).forEach(function (x) { if (!seen.has(x.id)) merged[c].push(x); });
+          // 병합: 동일 ID는 updatedAt 최신 우선, 없으면 기존 유지 + 신규 추가
+          next = migrate(_data);
+          ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','inbox','reviews','subjects'].forEach(function (c) {
+            const byId = {};
+            (next[c] || []).forEach(function (x) { byId[x.id] = x; });
+            (incoming[c] || []).forEach(function (x) {
+              const cur = byId[x.id];
+              if (!cur) { next[c].push(x); byId[x.id] = x; }
+              else {
+                const ct = cur.updatedAt ? Date.parse(cur.updatedAt) : 0;
+                const xt = x.updatedAt ? Date.parse(x.updatedAt) : 0;
+                if (xt > ct) Object.assign(cur, x);   // 더 최신 내용만 반영
+              }
+            });
           });
-          _data = merged;
         }
-        commit(); return true;
+        _data = next;
+        commit();                                       // 확인: 실제 저장
+        return true;
       },
       counts: function () {
         return {
@@ -436,17 +492,45 @@
     const todayBlocks = d.blocks.filter(function (b) { return b.date === tk && isExam(d, b); });
     const secured = todayBlocks.length ? sumNonOverlap(todayBlocks) : null;
     const wa = weekAdherence(d);
-    const dueReviews = d.cards.length === 0 ? null : d.cards.filter(function (c) { return c.status !== 'archived' && c.nextReview && c.nextReview <= tk; }).length;
+    // 복습 화면과 동일 기준: 활성(active) + 복습일이 오늘 이전 (초안/보관 제외) (보고서 6쪽)
+    const dueReviews = d.cards.length === 0 ? null : d.cards.filter(function (c) { return c.status === 'active' && c.nextReview && c.nextReview <= tk; }).length;
     const acadAlerts = (d.assignments.length === 0 && d.courses.length === 0) ? null : upcomingAssignments(d).length;
     return { securedToday: secured, adherence: wa.adherence, adherenceSub: wa.sub, dueReviews: dueReviews, acadAlerts: acadAlerts };
   }
+  // 세션이 '수험 과목'에 속하는지 (수험 외 시간 제외, 보고서 6쪽)
+  function isExamSession(d, s) {
+    if (!s.subjectId) return true; // 과목 미지정 타이머 세션은 수험으로 간주
+    const sub = d.subjects.find(function (x) { return x.id === s.subjectId; });
+    return sub ? sub.kind === 'exam' : true;
+  }
+  // 이번 주(또는 지정 월요일)의 수험 계획 블록 분 합계
+  function weekPlanMin(d, weekDates) {
+    return d.blocks.filter(function (b) { return weekDates.indexOf(b.date) >= 0 && isExam(d, b); })
+      .reduce(function (s, b) { return s + minutesBetween(b.start, b.end); }, 0);
+  }
+  // 이번 주 수험 세션 실제 분 합계 (수험 과목만, 휴식 제외)
+  function weekActualMin(d, weekDates) {
+    return d.sessions.filter(function (s) { return weekDates.indexOf(dayKey(new Date(s.start))) >= 0 && isExamSession(d, s); })
+      .reduce(function (s, x) { return s + Math.max(0, minutesBetween(x.start, x.end) - (x.breakMin || 0)); }, 0);
+  }
+  // 기준 계획(최초 확정) 읽기 전용 조회. 확정된 값이 있으면 그 값, 없으면 현재 계획(잠정).
+  // 실제 확정 저장은 주간 계획 화면의 '계획 확정' 버튼에서만 수행한다 (렌더 중 변경 금지).
+  function baselinePlanMin(d, mondayKey, currentPlanMin) {
+    const bp = (d.baselinePlans || {})[mondayKey];
+    if (bp && typeof bp.planMin === 'number') return { planMin: bp.planMin, confirmed: true };
+    return { planMin: currentPlanMin, confirmed: false };
+  }
   function weekAdherence(d) {
     const monday = getMonday(0);
+    const mondayKey = dayKey(monday);
     const weekDates = []; for (let i = 0; i < 7; i++) weekDates.push(dayKey(addDays(monday, i)));
-    const planMin = d.blocks.filter(function (b) { return weekDates.indexOf(b.date) >= 0 && isExam(d, b); }).reduce(function (s, b) { return s + minutesBetween(b.start, b.end); }, 0);
-    if (planMin === 0) return { adherence: null, sub: '확정 계획 없음' };
-    const actualMin = d.sessions.filter(function (s) { return weekDates.indexOf(dayKey(new Date(s.start))) >= 0; }).reduce(function (s, x) { return s + Math.max(0, minutesBetween(x.start, x.end) - (x.breakMin || 0)); }, 0);
-    return { adherence: Math.round(Math.min(999, actualMin / planMin * 100)), sub: fmtMin(actualMin) + ' / ' + fmtMin(planMin) };
+    const curPlan = weekPlanMin(d, weekDates);
+    const base = baselinePlanMin(d, mondayKey, curPlan);     // 분모 = 확정 기준(없으면 현재·잠정)
+    if (base.planMin === 0) return { adherence: null, sub: '확정 계획 없음' };
+    const actualMin = weekActualMin(d, weekDates);           // 분자 = 수험 세션만
+    const label = base.confirmed ? '기준' : '잠정';
+    const changed = (base.confirmed && curPlan !== base.planMin) ? ' · 현재계획 ' + fmtMin(curPlan) : '';
+    return { adherence: Math.round(Math.min(999, actualMin / base.planMin * 100)), sub: fmtMin(actualMin) + ' / ' + label + ' ' + fmtMin(base.planMin) + changed };
   }
   function nextBlock(d) {
     const nowIso = new Date().toISOString();
@@ -640,20 +724,54 @@
     ];
     const m = ctx.modal({ title: edit ? '블록 편집' : '계획 블록 추가', body: body, footer: footer });
 
-    function save() {
+    function computeTimes() {
       const date = dateInput.value;
-      if (!date || !startInput.value || !endInput.value) { ctx.toast('날짜와 시간을 입력하세요.', 'warn'); return; }
+      if (!date || !startInput.value || !endInput.value) return null;
       const startIso = date + 'T' + startInput.value + ':00';
       let endIso = date + 'T' + endInput.value + ':00';
       if (new Date(endIso) <= new Date(startIso)) { endIso = dayKey(addDays(parseKey(date), 1)) + 'T' + endInput.value + ':00'; }
-      const title = titleInput.value.trim() || (taskSel.value && Store.task(taskSel.value) ? Store.task(taskSel.value).title : '') || (subjSel.value && Store.subject(subjSel.value) ? Store.subject(subjSel.value).name : '') || '블록';
-      const conflict = d.blocks.find(function (x) { return x.id !== (edit && edit.id) && x.date === date && x.locked && new Date(startIso) < new Date(x.end) && new Date(x.start) < new Date(endIso); });
+      return { date: date, startIso: startIso, endIso: endIso };
+    }
+    function doSave(t, title) {
       Store.update(function (dd) {
-        if (edit) { Object.assign(dd.blocks.find(function (x) { return x.id === edit.id; }), { title: title, kind: kindSel.value, subjectId: subjSel.value, taskId: taskSel.value, date: date, start: startIso, end: endIso, locked: lockInput.checked }); }
-        else dd.blocks.push({ id: Store.id('blk'), title: title, kind: kindSel.value, subjectId: subjSel.value, taskId: taskSel.value, date: date, start: startIso, end: endIso, locked: lockInput.checked });
+        if (edit) { Object.assign(dd.blocks.find(function (x) { return x.id === edit.id; }), { title: title, kind: kindSel.value, subjectId: subjSel.value, taskId: taskSel.value, date: t.date, start: t.startIso, end: t.endIso, locked: lockInput.checked }); }
+        else dd.blocks.push({ id: Store.id('blk'), title: title, kind: kindSel.value, subjectId: subjSel.value, taskId: taskSel.value, date: t.date, start: t.startIso, end: t.endIso, locked: lockInput.checked });
       });
-      m.close(); ctx.refresh();
-      if (conflict) ctx.toast('주의: 잠금 블록 "' + conflict.title + '"과 시간이 겹칩니다.', 'warn', 5000); else ctx.toast('계획을 저장했습니다.');
+      m.close(); ctx.refresh(); ctx.toast('계획을 저장했습니다.');
+    }
+    function save() {
+      const t = computeTimes();
+      if (!t) { ctx.toast('날짜와 시간을 입력하세요.', 'warn'); return; }
+      const title = titleInput.value.trim() || (taskSel.value && Store.task(taskSel.value) ? Store.task(taskSel.value).title : '') || (subjSel.value && Store.subject(subjSel.value) ? Store.subject(subjSel.value).name : '') || '블록';
+      // 저장 전에 겹치는 '모든' 블록을 확인 (잠금뿐 아니라 고정수업·이동·생활 포함) — 보고서 5쪽 P0
+      const overlaps = d.blocks.filter(function (x) {
+        return x.id !== (edit && edit.id) && x.date === t.date &&
+          new Date(t.startIso) < new Date(x.end) && new Date(x.start) < new Date(t.endIso);
+      });
+      if (overlaps.length === 0) { doSave(t, title); return; }
+      // 겹치는 블록을 함께 보여 주고, 취소 / 시간 변경 / 그래도 저장(명시적 중복)을 선택
+      const list = el('div', { class: 'list', style: 'margin:8px 0' });
+      overlaps.forEach(function (x) {
+        const kind = blockKind(d, x);
+        list.append(el('div', { class: 'item' }, [
+          el('span', { class: 'tag tag-' + (kind === 'exam' ? 'exam' : kind === 'acad' ? 'acad' : 'muted') }, kind === 'exam' ? '수험' : kind === 'acad' ? '학업' : '기타'),
+          el('div', { class: 'main' }, [el('div', { class: 'title' }, (x.locked ? '🔒 ' : '') + (x.title || '블록')), el('div', { class: 'meta' }, fmtTime(x.start) + '~' + fmtTime(x.end))]),
+        ]));
+      });
+      const hasLocked = overlaps.some(function (x) { return x.locked; });
+      const cm = ctx.modal({
+        title: '시간이 겹칩니다',
+        body: el('div', {}, [
+          el('p', {}, '추가하려는 ' + fmtTime(t.startIso) + '~' + fmtTime(t.endIso) + ' 블록이 아래 ' + overlaps.length + '개와 겹칩니다.'),
+          list,
+          hasLocked ? el('p', { class: 'hint', style: 'color:var(--warn-fg)' }, '🔒 수동 잠금 블록과 겹칩니다. 보호된 공부 시간을 덮어쓰지 않도록 시간 변경을 권장합니다.') : null,
+          el('p', { class: 'hint' }, '"수험 보호"는 자동 보호가 아니라, 사용자가 지키려는 시간을 표시하는 것입니다.'),
+        ]),
+        footer: [
+          el('button', { class: 'btn', onclick: function () { cm.close(); } }, '시간 변경'),
+          el('button', { class: 'btn btn-primary', onclick: function () { cm.close(); doSave(t, title); } }, '그래도 저장(중복 기록)'),
+        ],
+      });
     }
   }
   function blockKind(d, b) { if (b.kind) return b.kind; const s = d.subjects.find(function (x) { return x.id === b.subjectId; }); return s && s.kind === 'exam' ? 'exam' : 'other'; }
@@ -755,10 +873,18 @@
   function markRewrite(orig, ctx, parentModal) {
     Store.update(function (dd) {
       const copy = JSON.parse(JSON.stringify(orig));
-      copy.id = Store.id('ans'); copy.rewriteOf = orig.id; copy.date = new Date().toISOString().slice(0, 10); copy.rater = 'self'; copy.note = '[재작성] ' + (copy.note || '');
+      copy.id = Store.id('ans');
+      copy.rewriteOf = orig.id;
+      copy.date = new Date().toISOString().slice(0, 10);
+      copy.rater = 'self';
+      copy.scored = false;                 // 미채점 상태로 시작 (보고서 3·6쪽 P1)
+      // 문항 배점은 유지하되 득점은 0으로 초기화 — 평가된 것처럼 보이지 않게
+      (copy.items || []).forEach(function (it) { it.score = 0; });
+      copy.errors = [];                    // 감점 기록도 초기화(새로 평가)
+      copy.note = '[재작성 · 미채점] ' + (orig.note ? '(이전 메모 참고) ' : '');
       dd.answers.push(copy);
     });
-    parentModal.close(); ctx.refresh(); ctx.toast('재작성 답안을 생성했습니다. 개선 여부를 기록하세요.');
+    parentModal.close(); ctx.refresh(); ctx.toast('재작성 답안을 미채점 상태로 생성했습니다. 채점 후 이전과 비교됩니다.');
   }
 
   /* =======================================================================
@@ -814,6 +940,9 @@
       });
     }
     function renderDetail() {
+      // 이전 에디터의 저장 이벤트 리스너 정리
+      const prev = detailCol.firstChild;
+      if (prev && typeof prev._cleanup === 'function') prev._cleanup();
       detailCol.innerHTML = '';
       const n = Store.note(noteSelectedId);
       if (!n) { detailCol.append(el('div', { class: 'empty' }, [el('span', { class: 'emoji' }, '📒'), el('h3', {}, '노트를 선택하거나 새로 만드세요'), el('button', { class: 'btn btn-primary', onclick: function () { createNote(ctx); } }, '새 노트')])); return; }
@@ -837,14 +966,36 @@
     const d = Store.data();
     const wrap = el('div', { class: 'card' });
     const saveStatus = el('span', { class: 'save-status' }, '저장됨');
-    let saveTimer;
+    let saveTimer, pendingSave = false;
+    // 실제 저장 성공(store:saved) 이후에만 "저장됨" 표시 (보고서 4쪽 P0)
+    function onSaved() {
+      if (!pendingSave) return;
+      pendingSave = false;
+      saveStatus.textContent = '저장됨 · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+      saveStatus.style.color = '';
+      refreshList();
+    }
+    function onSaveFail() {
+      if (!pendingSave) return;
+      pendingSave = false;
+      saveStatus.textContent = '⚠ 저장 실패 — 내용은 보존됨, 다시 시도하세요';
+      saveStatus.style.color = 'var(--warn-fg)';
+    }
+    window.addEventListener('store:saved', onSaved);
+    window.addEventListener('store:save-failed', onSaveFail);
+    // 이 에디터 DOM이 제거되면 리스너도 정리 (다음 렌더 때 중복 방지)
+    wrap._cleanup = function () {
+      window.removeEventListener('store:saved', onSaved);
+      window.removeEventListener('store:save-failed', onSaveFail);
+    };
     function touch() {
       saveStatus.textContent = '저장 중…';
+      saveStatus.style.color = 'var(--text-sub)';
+      pendingSave = true;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(function () {
+        // Store.update → 내부 save()는 디바운스 후 commit, commit 성공 시 store:saved 발생
         Store.update(function (dd) { const x = dd.notes.find(function (z) { return z.id === n.id; }); if (x) x.updatedAt = new Date().toISOString(); });
-        saveStatus.textContent = '저장됨 · ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-        refreshList();
       }, 500);
     }
     const title = el('input', { type: 'text', value: n.title, style: 'font-size:1.2rem;font-weight:700' });
@@ -1287,14 +1438,26 @@
   let current = 'home';
   const ctx = { navigate: navigate, refresh: refresh, toast: toast, modal: modal, confirm: confirmDialog };
 
-  function navigate(route) {
+  let _navigating = false;
+  function navigate(route, opts) {
+    opts = opts || {};
     if (!ROUTES[route]) route = 'home';
     current = route;
     const sb = document.getElementById('sidebar'); if (sb) sb.classList.remove('open');
     const sc = document.getElementById('scrim'); if (sc) sc.classList.remove('show');
+    // 해시를 먼저 맞추되, hashchange 재진입을 막기 위한 가드
+    _navigating = true;
+    if (('#' + route) !== window.location.hash) window.location.hash = route;
+    _navigating = false;
     refresh(); updateNavHighlight();
-    window.location.hash = route;
-    const c = document.getElementById('content'); if (c) c.focus();
+    if (!opts.noFocus) { const c = document.getElementById('content'); if (c) c.focus(); }
+  }
+  // 뒤로/앞으로(해시 변경) 시 URL·제목·화면을 항상 일치시킴 (보고서 3쪽 P0)
+  function onHashChange() {
+    if (_navigating) return;
+    const h = window.location.hash.slice(1);
+    const route = ROUTES[h] ? h : 'home';
+    if (route !== current) { current = route; refresh(); updateNavHighlight(); }
   }
   function refresh() {
     const content = document.getElementById('content');
@@ -1373,6 +1536,7 @@
     footer.append(
       el('button', { class: 'nav-item secondary', onclick: openInbox }, [el('span', { class: 'ico' }, '📥'), '빠른 수집함']),
       el('button', { class: 'nav-item secondary', 'data-route': 'settings', onclick: function () { navigate('settings'); } }, [el('span', { class: 'ico' }, '⚙️'), '설정과 백업']),
+      el('div', { id: 'cloud-box', style: 'border-top:1px solid var(--border);margin-top:6px;padding-top:6px' }),
       el('div', { class: 'save-status', id: 'save-status', style: 'padding:8px 12px' }, '자동 저장 켜짐')
     );
     sidebar.append(footer);
@@ -1426,7 +1590,63 @@
     navigate(current);
     Timer.resumeIfActive();
     window.addEventListener('timer:changed', function () { refresh(); });
+    window.addEventListener('hashchange', onHashChange);
     maybeOnboard();
+    setupCloud();
+  }
+
+  /* =======================================================================
+     15. 클라우드 동기화 연동 (window.StudyCloud — firebase-sync.js)
+     ======================================================================= */
+  let cloudState = { enabled: false, user: null };
+
+  function setupCloud() {
+    function connect() {
+      if (!window.StudyCloud) return false;
+      window.StudyCloud.register({
+        onState: function (st) { cloudState = st; updateCloudUI(); },
+        getLocal: function () { return Store.data(); },
+        setLocal: function (remote) { Store.replaceAll(remote, { fromCloud: true }); refresh(); },
+      });
+      // 로컬이 바뀔 때마다 클라우드로 업로드(로그인 상태에서만 동작)
+      Store.subscribe(function (data) {
+        if (window.StudyCloud) window.StudyCloud.pushLocal(data);
+      });
+      return true;
+    }
+    if (!connect()) {
+      window.addEventListener('studycloud:ready', connect, { once: true });
+      // 혹시 순서가 엇갈려도 몇 번 더 시도
+      let tries = 0;
+      const iv = setInterval(function () { if (connect() || ++tries > 20) clearInterval(iv); }, 300);
+    }
+  }
+
+  function updateCloudUI() {
+    const box = document.getElementById('cloud-box');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!cloudState.enabled) {
+      box.append(el('div', { class: 'save-status', style: 'padding:4px 12px' }, '로컬 저장 (클라우드 미설정)'));
+      return;
+    }
+    if (cloudState.user) {
+      box.append(
+        el('div', { class: 'row', style: 'gap:8px;padding:6px 12px;align-items:center' }, [
+          cloudState.user.photo ? el('img', { src: cloudState.user.photo, width: '24', height: '24', style: 'border-radius:50%', alt: '' }) : el('span', {}, '👤'),
+          el('div', { style: 'flex:1;min-width:0' }, [
+            el('div', { style: 'font-size:.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis' }, cloudState.user.name || '로그인됨'),
+            el('div', { class: 'hint', style: 'font-size:.72rem' }, '여러 기기 동기화 중'),
+          ]),
+        ]),
+        el('button', { class: 'nav-item secondary', style: 'min-height:36px', onclick: function () { window.StudyCloud.logout(); } }, [el('span', { class: 'ico' }, '🚪'), '로그아웃']),
+      );
+    } else {
+      box.append(
+        el('button', { class: 'btn btn-primary btn-block', style: 'margin:4px 0', onclick: function () { window.StudyCloud.login(); } }, '🔵 구글로 로그인 (기기 동기화)'),
+        el('div', { class: 'hint', style: 'padding:0 4px 4px;font-size:.72rem' }, '로그인하면 폰·PC에서 같은 기록을 씁니다.'),
+      );
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

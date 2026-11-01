@@ -440,20 +440,23 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.7; }
   .grid-4 { grid-template-columns: repeat(2, 1fr); }
 }
 
+/* 기본(데스크톱): 모바일 일간 목록은 숨김. 반드시 미디어쿼리보다 '앞'에 둔다.
+   이 순서가 뒤바뀌면 모바일에서도 숨겨져 일정이 전혀 안 보이는 버그가 생김 (보고서 3쪽 P0) */
+.mobile-day-view { display: none; }
+
+@media (min-width: 768px) { .mobile-only { display: none !important; } }
+
 @media (max-width: 767px) {
   body { font-size: 15px; }
   .content { padding: var(--s4); }
   .topbar { padding: var(--s3) var(--s4); }
   .search-box { min-width: 0; flex: 1; }
   .grid-2, .grid-3, .grid-4, .split, .field-row { grid-template-columns: 1fr; }
-  .timetable { display: none; } /* 모바일은 일간 목록 사용 (보고서 14쪽) */
-  .mobile-day-view { display: block; }
+  .desktop-only { display: none !important; }      /* 데스크톱 전용(시간표 카드 등) 숨김 */
+  .timetable { display: none !important; }          /* 모바일은 일간 목록 사용 */
+  .mobile-day-view { display: block !important; }   /* 모바일 일간 목록 표시 (우선순위 확보) */
   .modal { max-height: 100vh; border-radius: 0; height: 100%; }
 }
-
-.mobile-day-view { display: none; }
-@media (max-width: 767px) { .desktop-only { display: none !important; } }
-@media (min-width: 768px) { .mobile-only { display: none !important; } }
 
 /* 인쇄용 주간 보기 (보고서 8쪽) */
 @media print {

@@ -3,6 +3,7 @@ server.ps1
 start-server.bat
 접속방법.md
 깃허브배포방법.md
+파이어베이스설정.md
 
 # 임시/시스템 파일
 _*.txt
