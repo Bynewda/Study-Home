@@ -932,7 +932,7 @@
     }
     acadCard.append(el('div', { class: 'row', style: 'gap:6px;margin-top:12px;flex-wrap:wrap' }, [
       el('button', { class: 'btn btn-sm', onclick: function () { ctx.navigate('academic'); } }, '대학 학업 열기'),
-      el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { openLearnUsSyncModal(ctx); } }, '🔄 LearnUs 동기화'),
+      el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { triggerLearnUsSync(ctx); } }, '🔄 LearnUs 동기화'),
     ]));
     right.append(acadCard);
 
@@ -2173,14 +2173,18 @@
     const unreadImp = (d.notices || []).filter(function (n) { return !n.read && n.important; }).length;
     const unsubmittedCnt = (d.assignments || []).filter(function (a) { return !a.submitted; }).length;
 
+    const extReady = hasLearnUsExt();
     const introRow = el('div', { class: 'row between', style: 'gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:center' }, [
       el('div', {}, [
         el('p', { class: 'page-intro', style: 'margin:0' }, '대학 기능의 목적은 수험 시간을 예측 가능하게 만드는 것입니다. 수업 참여·과제 제출·중요 공지를 한곳에서 관리합니다.'),
         d.settings.lastLearnUsSyncAt
-          ? el('div', { class: 'hint', style: 'font-size:.8rem;margin-top:4px' }, '마지막 LearnUs 동기화: ' + new Date(d.settings.lastLearnUsSyncAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))
-          : el('div', { class: 'hint', style: 'font-size:.8rem;margin-top:4px' }, '비밀번호 입력 없이 브라우저에서 LearnUs 과제·공지를 1클릭으로 불러올 수 있습니다.'),
+          ? el('div', { class: 'hint', style: 'font-size:.8rem;margin-top:4px' }, '마지막 LearnUs 동기화: ' + new Date(d.settings.lastLearnUsSyncAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + (extReady ? ' · 확장 앱 연결됨' : ''))
+          : el('div', { class: 'hint', style: 'font-size:.8rem;margin-top:4px' }, extReady ? '전용 확장 앱이 연결되어 버튼 1번으로 LearnUs 과제·공지를 바로 가져옵니다.' : '비밀번호 입력 없이 브라우저에서 LearnUs 과제·공지를 불러올 수 있습니다.'),
       ]),
-      el('button', { class: 'btn btn-primary', onclick: function () { openLearnUsSyncModal(ctx); } }, '🔄 LearnUs 자동 동기화'),
+      el('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, [
+        el('button', { class: 'btn btn-primary', onclick: function () { triggerLearnUsSync(ctx); } }, '🔄 LearnUs 자동 동기화'),
+        extReady ? el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { openLearnUsSyncModal(ctx); } }, '수동·안내') : null,
+      ]),
     ]);
     root.append(introRow);
 
@@ -2287,7 +2291,7 @@
     root.append(el('div', { class: 'section-head' }, [
       el('h2', {}, '과제·할일 ' + d.assignments.length + '개'),
       el('div', { class: 'row', style: 'gap:8px' }, [
-        el('button', { class: 'btn btn-sm', onclick: function () { openLearnUsSyncModal(ctx); } }, '🔄 LearnUs 불러오기'),
+        el('button', { class: 'btn btn-sm', onclick: function () { triggerLearnUsSync(ctx); } }, '🔄 LearnUs 불러오기'),
         el('button', { class: 'btn btn-primary', onclick: function () { openAssignmentEditor(null, ctx); } }, '+ 과제 추가'),
       ]),
     ]));
@@ -2385,7 +2389,7 @@
         el('span', { class: 'emoji' }, '📢'),
         el('h3', {}, '아직 불러온 공지사항이 없습니다'),
         el('p', {}, '상단의 "🔄 LearnUs 자동 동기화" 버튼을 눌러 모든 수강 강좌의 최신 공지사항과 시험·과제 안내를 한 번에 가져오세요.'),
-        el('button', { class: 'btn btn-primary', onclick: function () { openLearnUsSyncModal(ctx); } }, '🔄 LearnUs에서 공지·과제 가져오기'),
+        el('button', { class: 'btn btn-primary', onclick: function () { triggerLearnUsSync(ctx); } }, '🔄 LearnUs에서 공지·과제 가져오기'),
       ]));
       return;
     }
@@ -2487,8 +2491,36 @@
   function __learnUsCollectorMain(TARGET_ORIGIN) {
     (async function () {
       if (location.hostname.indexOf('learnus.org') < 0) {
-        alert('먼저 로그인된 연세 LearnUs(https://ys.learnus.org/) 탭에서 이 북마크를 클릭해 주세요!');
-        window.open('https://ys.learnus.org/', '_blank');
+        if (!location.hostname || location.href.indexOf('about:blank') === 0) {
+          var selfCode = 'void((' + __learnUsCollectorMain.toString() + ')(' + JSON.stringify(TARGET_ORIGIN || 'https://study-space-2027.netlify.app') + '));';
+          document.body.style.cssText = 'margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f5f7f6;font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;color:#1b2420;padding:24px;box-sizing:border-box';
+          document.body.innerHTML = '';
+          var card = document.createElement('div');
+          card.style.cssText = 'max-width:540px;width:100%;background:#fff;border:2px solid #234B3F;border-radius:16px;padding:26px;box-shadow:0 12px 36px rgba(0,0,0,.12);line-height:1.65';
+          card.innerHTML = '<div style="font-size:18px;font-weight:800;color:#234B3F;margin-bottom:8px">💡 북마크가 빈 새 탭(about:blank)에서 열렸습니다</div>'
+            + '<p style="margin:0 0 14px;font-size:14px;color:#44524c">네이버 웨일 등 브라우저에서 북마크 클릭 시 <strong>새 탭으로 열기</strong>가 작동하면 LearnUs 탭 대신 빈 탭에서 코드가 실행됩니다. 아래 버튼을 누르면 10초 만에 바로 해결됩니다!</p>'
+            + '<ol style="margin:0 0 16px;padding-left:20px;font-size:14px;color:#2a3631">'
+            + '<li>아래 <strong>📋 동기화 코드 복사하기</strong> 버튼을 클릭합니다.</li>'
+            + '<li>바로 옆에 열려 있는 <strong>LearnUs YONSEI</strong> 탭으로 이동해 키보드 <strong>F12</strong> (또는 <strong>Ctrl + Shift + J</strong>)를 누릅니다.</li>'
+            + '<li><strong>Console(콘솔)</strong> 칸에 붙여넣기(<strong>Ctrl + V</strong>) 후 <strong>Enter</strong>를 누르면 즉시 동기화됩니다!<br><span style="font-size:12.5px;color:#62706a">(처음 붙여넣을 때 경고가 뜨면 <code>allow pasting</code> 또는 <code>붙여넣기 허용</code> 입력 후 Enter)</span></li>'
+            + '</ol>';
+          var cpBtn = document.createElement('button');
+          cpBtn.textContent = '📋 동기화 코드 복사하기';
+          cpBtn.style.cssText = 'width:100%;padding:12px 16px;border:none;border-radius:10px;background:#234B3F;color:#fff;font-size:15px;font-weight:700;cursor:pointer';
+          cpBtn.onclick = async function () {
+            try {
+              await navigator.clipboard.writeText(selfCode);
+              cpBtn.textContent = '✅ 복사 완료! 이제 LearnUs 탭에서 F12 → Console에 붙여넣으세요';
+              cpBtn.style.background = '#1c6b4a';
+            } catch (e) {
+              window.prompt('아래 코드를 복사(Ctrl+C)하세요:', selfCode);
+            }
+          };
+          card.appendChild(cpBtn);
+          document.body.appendChild(card);
+          return;
+        }
+        alert('먼저 로그인된 연세 LearnUs(https://ys.learnus.org/) 탭에서 실행해 주세요!');
         return;
       }
 
@@ -2868,7 +2900,7 @@
     const origin = (typeof window !== 'undefined' && window.location && /^https?:/.test(window.location.protocol))
       ? window.location.origin
       : 'https://study-space-2027.netlify.app';
-    return '(' + __learnUsCollectorMain.toString() + ')(' + JSON.stringify(origin) + ');';
+    return 'void((' + __learnUsCollectorMain.toString() + ')(' + JSON.stringify(origin) + '));';
   }
 
   function matchCourseForLearnUs(courses, luCourseId, courseName, codeHint) {
@@ -3012,40 +3044,70 @@
     return { courses: matchedCrs, addedAsg: addedAsg, updatedAsg: updatedAsg, addedNtc: addedNtc };
   }
 
+  function hasLearnUsExt() {
+    return !!(typeof document !== 'undefined' && document.documentElement && document.documentElement.getAttribute('data-study-home-lu-ext') === '1');
+  }
+
+  let _extSyncInFlight = false;
+  function triggerLearnUsSync(ctx) {
+    if (hasLearnUsExt()) {
+      if (_extSyncInFlight) {
+        ctx.toast('LearnUs 동기화가 이미 진행 중입니다. 잠시만 기다려 주세요…');
+        return;
+      }
+      _extSyncInFlight = true;
+      ctx.toast('🔄 LearnUs에서 수강 강좌·과제 마감·중요 공지를 불러오는 중입니다… (약 3~6초)', 'ok', 7000);
+      window.postMessage({ type: 'STUDY_HOME_EXT_REQUEST_SYNC' }, window.location.origin);
+      setTimeout(function () { _extSyncInFlight = false; }, 25000);
+      return;
+    }
+    openLearnUsSyncModal(ctx);
+  }
+
   function openLearnUsSyncModal(ctx) {
     const code = buildLearnUsSyncScript();
     const bookmarkletHref = 'javascript:' + encodeURIComponent(code);
 
-    const dragLink = el('a', {
-      href: bookmarkletHref,
-      class: 'btn btn-primary',
-      style: 'text-decoration:none;cursor:grab;font-weight:800',
-      onclick: function (e) {
-        e.preventDefault();
-        ctx.toast('이 버튼은 클릭 대신 마우스로 끌어서 브라우저 상단 "즐겨찾기 모음(북마크 바)"에 올려두세요!', 'warn', 4500);
-      },
-    }, '📥 LearnUs 수험공간 동기화');
-
     const copyScriptBtn = el('button', {
-      class: 'btn',
+      class: 'btn btn-primary',
       onclick: async function () {
         try {
           await navigator.clipboard.writeText(code);
-          ctx.toast('동기화 코드를 복사했습니다. LearnUs 탭에서 F12 → Console에 붙여넣고 Enter를 누르세요.');
+          ctx.toast('✅ 복사 완료! LearnUs 탭으로 가서 F12(또는 Ctrl+Shift+J) → Console에 붙여넣고 Enter를 누르세요.', 'ok', 5000);
         } catch (e) {
-          ctx.toast('복사에 실패했습니다. 북마크 드래그 방식을 이용해 주세요.', 'warn');
+          window.prompt('아래 코드를 복사(Ctrl+C)하세요:', code);
         }
       },
-    }, '📋 코드 복사 (F12 콘솔용)');
+    }, '📋 1. 동기화 코드 복사');
 
     const openLuBtn = el('button', {
       class: 'btn',
       onclick: function () {
         window.open('https://ys.learnus.org/', 'learnus_sync_win');
       },
-    }, '1. LearnUs 열기 ↗');
+    }, '2. LearnUs 열기 ↗');
 
-    const pasteArea = el('textarea', { rows: '3', placeholder: '자동 전송이 차단된 경우에만 LearnUs에서 복사한 데이터를 여기에 붙여넣으세요.' });
+    const copyWhaleExtUrlBtn = el('button', {
+      class: 'btn btn-sm',
+      onclick: async function () {
+        try {
+          await navigator.clipboard.writeText('whale://extensions');
+          ctx.toast('주소 복사 완료! 웨일 브라우저 상단 주소창에 붙여넣고(Ctrl+V) Enter를 누르세요.');
+        } catch (e) {}
+      },
+    }, '📋 whale://extensions 주소 복사');
+
+    const dragLink = el('a', {
+      href: bookmarkletHref,
+      class: 'btn btn-sm',
+      style: 'text-decoration:none;cursor:grab;font-weight:700',
+      onclick: function (e) {
+        e.preventDefault();
+        ctx.toast('이 버튼은 마우스로 끌어서 북마크 바에 올려두는 용도입니다.', 'warn', 4000);
+      },
+    }, '📥 LearnUs 수험공간 동기화 (드래그)');
+
+    const pasteArea = el('textarea', { rows: '3', placeholder: '팝업 차단 등으로 자동 전송이 안 된 경우에만 LearnUs에서 복사한 데이터를 여기에 붙여넣으세요.' });
     const pasteBtn = el('button', {
       class: 'btn btn-primary btn-sm',
       style: 'margin-top:6px',
@@ -3067,31 +3129,35 @@
     const body = el('div', { class: 'stack', style: 'gap:12px' }, [
       el('div', { class: 'card', style: 'background:var(--exam-bg);border-color:var(--border)' }, [
         el('div', { style: 'font-weight:700;color:var(--exam-fg);margin-bottom:4px' }, '🔒 아이디·비밀번호 입력이 필요 없습니다'),
-        el('p', { class: 'hint', style: 'margin:0;color:var(--text)' }, '연세포털 비밀번호를 외부에 맡기지 않고, 본인 브라우저에 이미 로그인된 LearnUs 화면에서 과제·동영상 마감·공지사항만 안전하게 읽어옵니다.'),
+        el('p', { class: 'hint', style: 'margin:0;color:var(--text)' }, '네이버 웨일 등에서 북마크 클릭 시 빈 새 탭(about:blank)이 열리는 문제 없이 100% 작동하는 아래 방법 1 또는 방법 2를 이용해 주세요.'),
       ]),
       el('div', { class: 'card' }, [
-        el('div', { style: 'font-weight:700;margin-bottom:8px' }, '방법 A · 북마크 바 1클릭 연동 (추천 · 매주 1초 실행)'),
-        el('ol', { style: 'margin:0 0 12px;padding-left:20px;font-size:.9rem;line-height:1.8;color:var(--text-sub)' }, [
-          el('li', {}, '아래 초록색 "📥 LearnUs 수험공간 동기화" 버튼을 마우스로 끌어 브라우저 상단 즐겨찾기(북마크) 바에 올려둡니다. (최초 1회)'),
-          el('li', {}, '"1. LearnUs 열기 ↗"로 로그인된 https://ys.learnus.org 화면을 엽니다.'),
-          el('li', {}, 'LearnUs 화면에서 방금 등록한 즐겨찾기 버튼을 누르면 모든 강좌의 과제·공지가 이 홈페이지로 자동 전송됩니다!'),
+        el('div', { style: 'font-weight:700;margin-bottom:8px' }, '방법 1 · 지금 당장 10초 만에 불러오기 (F12 콘솔 · 웨일/크롬 공통 추천)'),
+        el('ol', { style: 'margin:0 0 12px;padding-left:20px;font-size:.9rem;line-height:1.75;color:var(--text-sub)' }, [
+          el('li', {}, '아래 "📋 1. 동기화 코드 복사" 버튼을 클릭합니다.'),
+          el('li', {}, '로그인된 LearnUs 탭으로 이동해 키보드 F12 (또는 Ctrl + Shift + J)를 누릅니다.'),
+          el('li', {}, 'Console(콘솔) 탭에 Ctrl + V로 붙여넣고 Enter를 누르면 모든 강좌의 과제·공지가 자동 반영됩니다! (최초 1회 붙여넣기 경고가 뜨면 allow pasting 또는 붙여넣기 허용 입력 후 Enter)'),
         ]),
-        el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [dragLink, openLuBtn]),
+        el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [copyScriptBtn, openLuBtn]),
+      ]),
+      el('div', { class: 'card' }, [
+        el('div', { style: 'font-weight:700;margin-bottom:8px' }, '방법 2 · 앞으로 홈페이지 안에서 버튼 1번으로 끝내기 (웨일/크롬 전용 확장 앱)'),
+        el('ol', { style: 'margin:0 0 10px;padding-left:20px;font-size:.88rem;line-height:1.75;color:var(--text-sub)' }, [
+          el('li', {}, '웨일 주소창에 whale://extensions (크롬은 chrome://extensions) 입력 후 이동합니다.'),
+          el('li', {}, '우측 상단 "개발자 모드" 스위치를 켭니다.'),
+          el('li', {}, '"압축해제된 확장 앱 로드" 클릭 → 바탕화면 "홈페이지" 폴더 안의 "learnus-sync-extension" 폴더를 선택한 뒤 이 홈페이지를 새로고침(F5)하면, 이후부터는 "🔄 LearnUs 자동 동기화" 버튼 클릭 한 번으로 즉시 연동됩니다!'),
+        ]),
+        el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [copyWhaleExtUrlBtn]),
       ]),
       el('details', { class: 'card' }, [
-        el('summary', { style: 'cursor:pointer;font-weight:700;font-size:.9rem' }, '방법 B · 북마크 등록 없이 지금 한 번만 실행하기 (F12 콘솔 / 수동 붙여넣기)'),
+        el('summary', { style: 'cursor:pointer;font-weight:700;font-size:.9rem' }, '보조 도구 · 수동 데이터 붙여넣기 / 북마크 바 드래그'),
         el('div', { style: 'margin-top:10px;display:flex;flex-direction:column;gap:8px' }, [
-          el('p', { class: 'hint', style: 'margin:0' }, '① 아래 "코드 복사" 클릭 → ② LearnUs 탭에서 F12 키 → Console 탭에 붙여넣고 Enter! (만약 Console에 붙여넣기 경고가 뜨면 allow pasting 입력 후 Enter)'),
-          el('div', { class: 'row', style: 'gap:8px' }, [copyScriptBtn, openLuBtn.cloneNode(true)]),
-          el('div', { style: 'margin-top:6px' }, [pasteArea, pasteBtn]),
+          el('p', { class: 'hint', style: 'margin:0' }, '※ 웨일에서 북마크 클릭 시 about:blank 빈 탭이 뜨는 경우: 웨일 설정(whale://settings/tabs)에서 북마크 새 탭 열기 설정을 끄거나 위 방법 1·2를 사용하세요.'),
+          el('div', { class: 'row', style: 'gap:8px' }, [dragLink]),
+          el('div', { style: 'margin-top:4px' }, [pasteArea, pasteBtn]),
         ]),
       ]),
     ]);
-    body.querySelectorAll('button').forEach(function (b) {
-      if (b.textContent === '1. LearnUs 열기 ↗' && !b.onclick) {
-        b.onclick = function () { window.open('https://ys.learnus.org/', 'learnus_sync_win'); };
-      }
-    });
 
     const m = ctx.modal({
       title: 'LearnUs 과제 · 중요 공지 자동 동기화',
@@ -3104,9 +3170,31 @@
 
   function setupLearnUsBridge() {
     window.addEventListener('message', function (e) {
-      if (!e || !e.origin || !/^https:\/\/([a-z0-9-]+\.)?learnus\.org$/i.test(e.origin)) return;
+      if (!e || !e.data) return;
       const msg = e.data;
-      if (!msg || msg.type !== 'STUDY_HOME_LEARNUS_SYNC' || !msg.payload) return;
+
+      /* 1) 전용 웨일/크롬 확장 앱 결과 수신 */
+      if (e.source === window && e.origin === window.location.origin && msg.type === 'STUDY_HOME_EXT_SYNC_RESULT') {
+        _extSyncInFlight = false;
+        if (!msg.ok || !msg.payload) {
+          toast(msg.error || 'LearnUs 동기화에 실패했습니다.', 'warn', 6000);
+          return;
+        }
+        try {
+          const res = applyLearnUsSyncPayload(msg.payload);
+          if (_activeLearnUsModal) { _activeLearnUsModal.close(); _activeLearnUsModal = null; }
+          acadTab = (res.addedAsg > 0) ? 'assignments' : (res.addedNtc > 0 ? 'notices' : acadTab);
+          navigate('academic');
+          toast('✅ LearnUs 동기화 완료! 과제 신규 ' + res.addedAsg + '건(갱신 ' + res.updatedAsg + '건) · 공지 ' + res.addedNtc + '건 반영', 'ok', 5000);
+        } catch (err) {
+          toast('동기화 반영 오류: ' + err.message, 'warn');
+        }
+        return;
+      }
+
+      /* 2) LearnUs 탭(F12 콘솔 / 북마크릿)에서 직접 postMessage 수신 */
+      if (!e.origin || !/^https:\/\/([a-z0-9-]+\.)?learnus\.org$/i.test(e.origin)) return;
+      if (msg.type !== 'STUDY_HOME_LEARNUS_SYNC' || !msg.payload) return;
       try {
         const res = applyLearnUsSyncPayload(msg.payload);
         if (e.source && typeof e.source.postMessage === 'function') {
