@@ -84,7 +84,20 @@ const StudyCloud = {
       await signInWithPopup(this._auth, provider);
     } catch (e) {
       console.error("[StudyCloud] 로그인 실패", e);
-      alert("로그인에 실패했습니다: " + (e && e.message ? e.message : e));
+      const code = e && e.code ? e.code : "";
+      let msg;
+      if (code === "auth/unauthorized-domain") {
+        msg = "이 사이트 주소가 Firebase에 등록돼 있지 않습니다.\nFirebase 콘솔 → Authentication → Settings → 승인된 도메인에 현재 도메인(예: bynewda.github.io)을 추가하세요.";
+      } else if (code === "auth/popup-blocked") {
+        msg = "브라우저가 로그인 팝업을 막았습니다. 팝업 차단을 해제하고 다시 시도하세요.";
+      } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+        return; // 사용자가 직접 닫음 — 조용히 무시
+      } else if (code === "auth/operation-not-allowed") {
+        msg = "구글 로그인 제공업체가 꺼져 있습니다.\nFirebase 콘솔 → Authentication → Sign-in method 에서 Google 을 사용 설정하세요.";
+      } else {
+        msg = "로그인에 실패했습니다: " + (e && e.message ? e.message : e);
+      }
+      alert(msg);
     }
   },
 
@@ -120,19 +133,23 @@ const StudyCloud = {
     if (this._unsub) this._unsub();
     this._unsub = onSnapshot(ref, (snap) => {
       if (!snap.exists()) return;
-      // 로컬에서 방금 올린 변경이 되돌아온 경우도 반영은 안전(동일 데이터)
+      const payloadStr = snap.data() && snap.data().payload;
+      // 방금 내가 올린 변경이 그대로 되돌아온 에코면 무시 (불필요한 재렌더 방지)
+      if (payloadStr && payloadStr === this._lastAppliedPayload) return;
       const remote = this._parse(snap.data());
       if (!remote) return;
       const local = this._getLocal ? this._getLocal() : null;
       const rt = remote.updatedAt ? Date.parse(remote.updatedAt) : 0;
       const lt = local && local.updatedAt ? Date.parse(local.updatedAt) : 0;
-      if (rt >= lt) this._applyRemote(remote);
+      if (rt >= lt) { this._lastAppliedPayload = payloadStr; this._applyRemote(remote); }
     }, (err) => console.error("[StudyCloud] 구독 오류", err));
   },
 
   _stopSync() {
     if (this._unsub) { this._unsub(); this._unsub = null; }
   },
+
+  _lastAppliedPayload: null,  // 방금 반영/업로드한 payload 문자열 (에코 무시용)
 
   _parse(docData) {
     try { return docData && docData.payload ? JSON.parse(docData.payload) : null; }
@@ -152,7 +169,9 @@ const StudyCloud = {
     clearTimeout(this._pushTimer);
     this._pushTimer = setTimeout(async () => {
       try {
-        await setDoc(this._docRef(this.user.uid), { payload: JSON.stringify(data), updatedAt: Date.now() });
+        const payload = JSON.stringify(data);
+        this._lastAppliedPayload = payload;   // 내가 올린 것 기록 → 에코 무시
+        await setDoc(this._docRef(this.user.uid), { payload: payload, updatedAt: Date.now() });
       } catch (e) { console.error("[StudyCloud] 업로드 오류", e); }
     }, 700);
   },
