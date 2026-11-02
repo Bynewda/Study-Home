@@ -50,6 +50,7 @@
     settings:'<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1l-.3-2.5H9.4l-.3 2.5a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.3 2.5h4.2l.3-2.5a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5c.07-.3.1-.7.1-1z"/>',
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+    ai:     '<path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/><path d="M12 7.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/>',
   };
   function svgIcon(name) {
     const span = el('span', { class: 'ico', 'aria-hidden': 'true' });
@@ -1865,6 +1866,44 @@
   }
 
   /* =======================================================================
+     13-b. AI 도구 — 자주 쓰는 AI 서비스 바로가기 모음
+     각 서비스의 공식 페이지를 새 탭으로 엽니다 (API 연동 아님).
+     ======================================================================= */
+  const AI_TOOLS = [
+    { id: 'gpt',    name: 'ChatGPT', vendor: 'OpenAI',        url: 'https://chatgpt.com/',           desc: '질문 정리·답안 초안·개념 설명에 두루 쓰기 좋습니다.', badge: 'GPT' },
+    { id: 'gemini', name: 'Gemini',  vendor: 'Google',        url: 'https://gemini.google.com/',     desc: '구글 검색·문서와 잘 붙는 범용 모델입니다.',           badge: 'G' },
+    { id: 'claude', name: 'Claude',  vendor: 'Anthropic',     url: 'https://claude.ai/',             desc: '긴 지문·판례 읽고 정리하는 작업에 강합니다.',          badge: 'C' },
+    { id: 'manus',  name: 'Manus',   vendor: 'Butterfly Effect', url: 'https://manus.im/',          desc: '여러 단계를 스스로 처리하는 에이전트형 도구입니다.',    badge: 'M' },
+    { id: 'kiro',   name: 'Kiro',    vendor: 'AWS',           url: 'https://app.kiro.dev/',          desc: '스펙 기반으로 코드를 만드는 개발용 에이전트입니다.',    badge: 'K' },
+  ];
+  function renderAiTools(root, ctx) {
+    root.append(el('p', { class: 'page-intro' }, '공부 중 자주 쓰는 AI 서비스를 한곳에 모았습니다. 카드를 누르면 공식 사이트가 새 탭에서 열립니다. (로그인·대화 내용은 각 서비스에 저장되며, 이 홈페이지에는 저장되지 않습니다.)'));
+
+    const grid = el('div', { class: 'grid grid-3' });
+    AI_TOOLS.forEach(function (t) {
+      const open = function () { window.open(t.url, '_blank', 'noopener,noreferrer'); };
+      const card = el('div', { class: 'card', role: 'button', tabindex: '0', style: 'cursor:pointer;display:flex;flex-direction:column;gap:8px' });
+      card.append(
+        el('div', { class: 'row', style: 'gap:10px;align-items:center' }, [
+          el('span', { 'aria-hidden': 'true', style: 'flex:0 0 auto;width:40px;height:40px;border-radius:10px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1rem' }, t.badge),
+          el('div', { style: 'flex:1;min-width:0' }, [
+            el('div', { style: 'font-weight:800;font-size:1.05rem' }, t.name),
+            el('div', { class: 'hint', style: 'font-size:.78rem' }, t.vendor),
+          ]),
+        ]),
+        el('p', { class: 'hint', style: 'margin:0;flex:1' }, t.desc),
+        el('button', { class: 'btn btn-primary btn-block', onclick: function (e) { e.stopPropagation(); open(); } }, t.name + ' 열기 ↗')
+      );
+      card.addEventListener('click', open);
+      card.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+      grid.append(card);
+    });
+    root.append(grid);
+
+    root.append(el('p', { class: 'hint', style: 'margin-top:16px' }, '참고: AI 답변은 사실과 다를 수 있으니, 조문·판례·공식 공고는 반드시 원문으로 확인하세요.'));
+  }
+
+  /* =======================================================================
      14. 앱 셸 — 라우팅 / 사이드바 / 검색 / 수집함 / 부팅
      ======================================================================= */
   const ROUTES = {
@@ -1876,6 +1915,7 @@
     review: { title: '복습', render: renderReview },
     academic: { title: '대학 학업', render: renderAcademic },
     log: { title: '기록과 회고', render: renderReviewLog },
+    ai: { title: 'AI 도구', render: renderAiTools },
     settings: { title: '설정과 백업', render: renderSettings },
   };
   let current = 'home';
@@ -1974,6 +2014,7 @@
     nav.append(el('div', { class: 'nav-group-label' }, '보조'));
     navItem(nav, 'academic', '대학 학업', 'academic');
     navItem(nav, 'log', '기록과 회고', 'log');
+    navItem(nav, 'ai', 'AI 도구', 'ai');
     sidebar.append(nav);
     const footer = el('div', { class: 'sidebar-footer' });
     footer.append(
