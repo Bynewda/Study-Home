@@ -133,6 +133,78 @@
   const STORAGE_KEY = 'patent-study-home:v1';
   const SCHEMA_VERSION = 2;
 
+  // 2026학년도 2학기 기본 수강 과목 (최초 1회 자동 등록, 이후 편집·삭제 자유)
+  const DEFAULT_COURSES_2026_2 = [
+    {
+      id: 'course-26-2-cv',
+      name: '기초컴퓨터비전',
+      semester: '2026-2',
+      credits: 3,
+      room: '제2공학관 공B004',
+      link: '',
+      schedule: [
+        { day: 0, start: '16:00', end: '17:50' },
+        { day: 2, start: '17:00', end: '17:50' },
+      ],
+    },
+    {
+      id: 'course-26-2-phys2',
+      name: '공학물리학및실험(2)',
+      semester: '2026-2',
+      credits: 4,
+      room: '(과118)/공A432',
+      link: '',
+      schedule: [
+        { day: 1, start: '11:00', end: '12:50' },
+        { day: 3, start: '11:00', end: '12:50' },
+      ],
+    },
+    {
+      id: 'course-26-2-semi',
+      name: '반도체물성',
+      semester: '2026-2',
+      credits: 3,
+      room: '공B004/동영상콘텐츠',
+      link: '',
+      schedule: [
+        { day: 1, start: '13:00', end: '14:50' },
+      ],
+    },
+    {
+      id: 'course-26-2-econ',
+      name: '경제성공학',
+      semester: '2026-2',
+      credits: 3,
+      room: '제1공학관 공A685',
+      link: '',
+      schedule: [
+        { day: 2, start: '12:00', end: '14:50' },
+      ],
+    },
+    {
+      id: 'course-26-2-neuro',
+      name: '융합뇌공학입문',
+      semester: '2026-2',
+      credits: 3,
+      room: '제1공학관 공A685',
+      link: '',
+      schedule: [
+        { day: 3, start: '14:00', end: '16:50' },
+      ],
+    },
+    {
+      id: 'course-26-2-netlab',
+      name: '네트워크실험',
+      semester: '2026-2',
+      credits: 2,
+      room: '공A138',
+      link: '',
+      schedule: [
+        { day: 4, start: '09:00', end: '13:50' },
+      ],
+    },
+  ];
+
   function defaultData() {
     return {
       schemaVersion: SCHEMA_VERSION,
@@ -140,6 +212,7 @@
         examDate: null, examDateConfirmed: false,
         electiveSubject: '디자인보호법', weeklyExamGoalH: 30,
         theme: 'light', readingWide: false, createdAt: new Date().toISOString(), onboarded: false,
+        seededCourses2026_2: true,
       },
       subjects: [
         { id: 'sub-patent', name: '특허법', kind: 'exam', color: '#355B36' },
@@ -148,7 +221,7 @@
         { id: 'sub-elec', name: '선택과목', kind: 'exam', color: '#78572C' },
       ],
       tasks: [], blocks: [], sessions: [], notes: [], answers: [],
-      cards: [], courses: [], assignments: [], inbox: [], focusToday: [],
+      cards: [], courses: JSON.parse(JSON.stringify(DEFAULT_COURSES_2026_2)), assignments: [], inbox: [], focusToday: [],
       reviews: [], retros: {}, lastOpenNote: null,
       // 주간 기준 계획(확정 목표) 보관: { 'YYYY-MM-DD(월요일)': { planMin, confirmedAt } }
       // 계획을 줄여도 이행률이 부풀려지지 않도록 '최초 확정'을 분리 보관 (보고서 6쪽)
@@ -162,13 +235,31 @@
 
     function migrate(d) {
       const base = defaultData();
-      return Object.assign({}, base, d, { settings: Object.assign({}, base.settings, d.settings || {}) });
+      const rawSettings = d && d.settings ? d.settings : {};
+      const alreadySeeded = !!rawSettings.seededCourses2026_2;
+      const next = Object.assign({}, base, d, {
+        settings: Object.assign({}, base.settings, rawSettings, { seededCourses2026_2: true }),
+      });
+      if (!alreadySeeded) {
+        if (!Array.isArray(next.courses)) next.courses = [];
+        const existingIds = new Set(next.courses.map(function (c) { return c && c.id; }));
+        const existingNames = new Set(next.courses.map(function (c) { return c && c.name; }));
+        DEFAULT_COURSES_2026_2.forEach(function (c) {
+          if (!existingIds.has(c.id) && !existingNames.has(c.name)) {
+            next.courses.push(JSON.parse(JSON.stringify(c)));
+          }
+        });
+      }
+      return next;
     }
     function load() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) { _data = defaultData(); return; }
-        _data = migrate(JSON.parse(raw)); _loadError = null;
+        const parsed = JSON.parse(raw);
+        const neededSeed = !(parsed && parsed.settings && parsed.settings.seededCourses2026_2);
+        _data = migrate(parsed); _loadError = null;
+        if (neededSeed) save();
       } catch (e) { _loadError = e; _data = defaultData(); console.error('불러오기 실패 — 마지막 저장본 보존', e); }
     }
     function save() { clearTimeout(_saveTimer); _saveTimer = setTimeout(commit, 400); }
