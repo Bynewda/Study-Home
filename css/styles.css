@@ -1222,6 +1222,7 @@ body.exam-sim-active .ai-widget-root { display: none !important; }
 .tt-block.exam { background: var(--exam-bg); color: var(--exam-fg); }
 .tt-block.acad { background: var(--acad-bg); color: var(--acad-fg); }
 .tt-block.other { background: var(--surface-soft); color: var(--text-sub); border-color: var(--border-strong); }
+.tt-block.commute { border-style: dashed; border-color: var(--border-strong); }
 
 .progress { height: 6px; background: color-mix(in srgb, var(--accent) 14%, var(--bg)); border-radius: 999px; overflow: hidden; }
 .progress > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }

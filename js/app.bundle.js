@@ -113,6 +113,8 @@
   function minutesBetween(a, b) { return Math.max(0, (new Date(b) - new Date(a)) / 60000); }
   function clampNum(v, min, max) { v = Number(v) || 0; return Math.min(max, Math.max(min, v)); }
   function dday(examDate, confirmed) { if (!examDate || !confirmed) return null; return Math.round((parseKey(examDate) - parseKey(todayKey())) / 86400000); }
+  function genId(p) { return (p || 'id') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); }
+  function weekDatesFromMonday(monday) { const out = []; for (let i = 0; i < 7; i++) out.push(dayKey(addDays(monday, i))); return out; }
 
   let _toastWrap;
   function toast(msg, type, ms) {
@@ -310,6 +312,7 @@
         theme: 'light', readingWide: false, createdAt: new Date().toISOString(), onboarded: false,
         seededCourses2026_2: true,
         seededLearnUsInit2026_2: true,
+        seededCommuteBlocksV1: true,
         lastLearnUsSyncAt: null,
       },
       subjects: [
@@ -325,6 +328,8 @@
       notices: [],
       inbox: [], focusToday: [],
       reviews: [], retros: {}, lastOpenNote: null, lastStudyResume: null,
+      dismissedAutoBlocks: {},
+      syncedCourseWeeks: [],
       // 주간 기준 계획(확정 목표) 보관: { 'YYYY-MM-DD(월요일)': { planMin, confirmedAt } }
       // 계획을 줄여도 이행률이 부풀려지지 않도록 '최초 확정'을 분리 보관 (보고서 6쪽)
       baselinePlans: {},
@@ -344,14 +349,18 @@
         settings: Object.assign({}, base.settings, rawSettings, {
           seededCourses2026_2: true,
           seededLearnUsInit2026_2: true,
+          seededCommuteBlocksV1: true,
         }),
       });
       if (!Array.isArray(next.settings.starredNoteIds)) next.settings.starredNoteIds = [];
       if (!next.settings.dailyReviewLimit || next.settings.dailyReviewLimit < 5) next.settings.dailyReviewLimit = 25;
       if (!next.settings.focusGoalMin || next.settings.focusGoalMin < 10) next.settings.focusGoalMin = 50;
+      if (!Array.isArray(next.blocks)) next.blocks = [];
       if (!Array.isArray(next.courses)) next.courses = [];
       if (!Array.isArray(next.assignments)) next.assignments = [];
       if (!Array.isArray(next.notices)) next.notices = [];
+      if (!next.dismissedAutoBlocks || typeof next.dismissedAutoBlocks !== 'object') next.dismissedAutoBlocks = {};
+      if (!Array.isArray(next.syncedCourseWeeks)) next.syncedCourseWeeks = [];
 
       // 기존 과목에 학정번호(code) 보강
       next.courses.forEach(function (c) {
@@ -383,17 +392,30 @@
           if (!asgIds.has(a.id)) next.assignments.push(JSON.parse(JSON.stringify(a)));
         });
       }
+
+      // 이번 주 반복 수업 및 대학 수업이 있는 모든 날짜의 전후 1시간 이동시간 자동 반영
+      syncWeekClassesAndCommute(next, weekDatesFromMonday(getMonday(0)));
+      const existingClassDates = new Set(
+        next.blocks.filter(function (b) { return b && b.date && isUniversityClassBlock(next, b); }).map(function (b) { return b.date; })
+      );
+      existingClassDates.forEach(function (dt) { reconcileDayCommuteBlocks(next, dt); });
+
       return next;
     }
     function load() {
       try {
         const raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) { _data = defaultData(); return; }
+        if (!raw) {
+          _data = defaultData();
+          syncWeekClassesAndCommute(_data, weekDatesFromMonday(getMonday(0)));
+          save();
+          return;
+        }
         const parsed = JSON.parse(raw);
-        const neededSeed = !(parsed && parsed.settings && parsed.settings.seededCourses2026_2 && parsed.settings.seededLearnUsInit2026_2);
+        const neededSeed = !(parsed && parsed.settings && parsed.settings.seededCourses2026_2 && parsed.settings.seededLearnUsInit2026_2 && parsed.settings.seededCommuteBlocksV1);
         _data = migrate(parsed); _loadError = null;
         if (neededSeed) save();
-      } catch (e) { _loadError = e; _data = defaultData(); console.error('불러오기 실패 — 마지막 저장본 보존', e); }
+      } catch (e) { _loadError = e; _data = defaultData(); syncWeekClassesAndCommute(_data, weekDatesFromMonday(getMonday(0))); console.error('불러오기 실패 — 마지막 저장본 보존', e); }
     }
     function save() { clearTimeout(_saveTimer); _saveTimer = setTimeout(commit, 400); }
     function commit() {
@@ -1564,30 +1586,27 @@
     const monday = getMonday(0);
     const weekDates = [];
     for (let i = 0; i < 7; i++) weekDates.push(dayKey(addDays(monday, i)));
+    ensureWeekScheduleSynced(weekDates);
 
     const items = d.blocks.filter(function (b) { return b.date === tk; }).map(function (b) {
       const kind = blockKind(d, b);
       const sub = Store.subject(b.subjectId);
+      const isCommute = b.source === 'commute';
+      const commuteDesc = b.commutePos === 'before'
+        ? '등교·이동 (첫 수업 1시간 전)'
+        : b.commutePos === 'after'
+          ? '하교·이동 (마지막 수업 1시간 후)'
+          : '이동시간';
       return {
         start: b.start,
         end: b.end,
         kind: kind,
         title: b.title || (sub ? sub.name : '학습 블록'),
-        subText: (b.locked ? '보호된 수험 블록' : (kind === 'exam' ? '수험 블록' : kind === 'acad' ? '대학 학업' : '일정')) + (sub ? ' · ' + sub.name : ''),
+        subText: isCommute
+          ? commuteDesc
+          : (b.locked ? '보호된 수험 블록' : (kind === 'exam' ? '수험 블록' : kind === 'acad' ? '대학 학업' : '일정')) + (sub ? ' · ' + sub.name : ''),
         onClick: function () { ctx.navigate(kind === 'acad' ? 'academic' : 'week'); },
       };
-    });
-
-    // 아직 블록으로 복사되지 않은 오늘 요일의 고정 대학 수업도 함께 표시
-    pendingClassBlocks(d, weekDates).filter(function (cb) { return cb.date === tk; }).forEach(function (cb) {
-      items.push({
-        start: cb.start,
-        end: cb.end,
-        kind: 'acad',
-        title: cb.title,
-        subText: '대학 고정 수업 · 시간표 연동',
-        onClick: function () { ctx.navigate('academic'); },
-      });
     });
 
     items.sort(function (a, b) { return a.start.localeCompare(b.start); });
@@ -1597,7 +1616,7 @@
       return card;
     }
 
-    const nowIso = new Date().toISOString();
+    const nowIso = toLocalIso(new Date());
     const list = el('div', { class: 'flow-list' });
     items.forEach(function (it) {
       const isNow = it.start <= nowIso && it.end > nowIso;
@@ -1830,7 +1849,224 @@
   /* =======================================================================
      7. 주간 계획 (보고서 8·9쪽)
      ======================================================================= */
-  // --- 묶음 D: 반복 수업 시간표 연결 · 빈 시간 제안 ------------------------
+  // --- 묶음 D: 반복 수업 + 첫 수업 전·마지막 수업 후 1시간 이동시간 자동 연결 · 빈 시간 제안 ---
+  function isOnlineCourse(dd, courseId) {
+    if (!courseId) return false;
+    const c = (dd.courses || []).find(function (x) { return x && x.id === courseId; });
+    if (!c) return false;
+    return /비대면/.test(c.name || '') || /^(비대면|온라인)(\s|$)/.test((c.room || '').trim());
+  }
+
+  function isUniversityClassBlock(dd, b) {
+    if (!b || !b.start || !b.end) return false;
+    if (b.source === 'commute') return false;
+    if (b.source === 'course' || b.courseId) {
+      return !isOnlineCourse(dd, b.courseId);
+    }
+    if (blockKind(dd, b) === 'acad') {
+      return !/비대면|온라인|동영상|과제|레포트|리포트/.test(b.title || '');
+    }
+    return false;
+  }
+
+  function minToDayIso(date, totalMin) {
+    const clamped = Math.max(0, Math.min(24 * 60, Math.round(totalMin)));
+    if (clamped >= 24 * 60) {
+      return dayKey(addDays(parseKey(date), 1)) + 'T00:00:00';
+    }
+    const hh = String(Math.floor(clamped / 60)).padStart(2, '0');
+    const mm = String(clamped % 60).padStart(2, '0');
+    return date + 'T' + hh + ':' + mm + ':00';
+  }
+
+  // 해당 날짜에 대학 수업이 있으면 첫 수업 앞 1시간·마지막 수업 뒤 1시간 이동시간 블록을 자동 맞춤
+  function reconcileDayCommuteBlocks(dd, date) {
+    if (!dd || !Array.isArray(dd.blocks) || !date) return false;
+    if (!dd.dismissedAutoBlocks || typeof dd.dismissedAutoBlocks !== 'object') dd.dismissedAutoBlocks = {};
+    let changed = false;
+
+    const dayStart = parseLocalDateTime(date + 'T00:00:00');
+    if (!dayStart || isNaN(dayStart.getTime())) return false;
+
+    const classBlocks = dd.blocks.filter(function (b) { return b && b.date === date && isUniversityClassBlock(dd, b); });
+
+    if (classBlocks.length === 0) {
+      const beforeLen = dd.blocks.length;
+      dd.blocks = dd.blocks.filter(function (b) {
+        if (b && b.date === date && b.source === 'commute' && !b.userEdited && !b.locked) return false;
+        return true;
+      });
+      return dd.blocks.length !== beforeLen;
+    }
+
+    let firstStartMin = Infinity;
+    let lastEndMin = -Infinity;
+    classBlocks.forEach(function (b) {
+      const bs = parseLocalDateTime(b.start);
+      const be = parseLocalDateTime(b.end);
+      if (!bs || !be || isNaN(bs.getTime()) || isNaN(be.getTime())) return;
+      const sMin = Math.round((bs - dayStart) / 60000);
+      const eMin = Math.round((be - dayStart) / 60000);
+      if (sMin < firstStartMin) firstStartMin = sMin;
+      if (eMin > lastEndMin) lastEndMin = eMin;
+    });
+
+    if (!isFinite(firstStartMin) || !isFinite(lastEndMin)) return false;
+
+    const specs = [
+      {
+        pos: 'before',
+        autoKey: 'commute:before:' + date,
+        startMin: Math.max(0, firstStartMin - 60),
+        endMin: Math.max(0, firstStartMin),
+      },
+      {
+        pos: 'after',
+        autoKey: 'commute:after:' + date,
+        startMin: Math.min(24 * 60, lastEndMin),
+        endMin: Math.min(24 * 60, lastEndMin + 60),
+      },
+    ];
+
+    specs.forEach(function (sp) {
+      if (sp.endMin <= sp.startMin) return;
+      if (dd.dismissedAutoBlocks[sp.autoKey]) return;
+
+      const targetStart = minToDayIso(date, sp.startMin);
+      const targetEnd = minToDayIso(date, sp.endMin);
+
+      const existing = dd.blocks.find(function (b) {
+        return b && b.date === date && (b.autoKey === sp.autoKey || (b.source === 'commute' && b.commutePos === sp.pos));
+      });
+
+      if (!existing) {
+        const manualSame = dd.blocks.find(function (b) {
+          return b && b.date === date && b.start === targetStart && b.end === targetEnd &&
+            (blockKind(dd, b) === 'other' || /이동/.test(b.title || ''));
+        });
+        if (manualSame) {
+          manualSame.source = 'commute';
+          manualSame.commutePos = sp.pos;
+          manualSame.autoKey = sp.autoKey;
+          manualSame.userEdited = true;
+          changed = true;
+          return;
+        }
+      }
+
+      if (existing) {
+        if (!existing.userEdited && !existing.locked) {
+          if (existing.start !== targetStart || existing.end !== targetEnd || !existing.title) {
+            existing.start = targetStart;
+            existing.end = targetEnd;
+            if (!existing.title) existing.title = '이동시간';
+            changed = true;
+          }
+        }
+      } else {
+        dd.blocks.push({
+          id: genId('blk'),
+          title: '이동시간',
+          kind: 'other',
+          subjectId: '',
+          taskId: '',
+          date: date,
+          start: targetStart,
+          end: targetEnd,
+          locked: false,
+          source: 'commute',
+          commutePos: sp.pos,
+          autoKey: sp.autoKey,
+        });
+        changed = true;
+      }
+    });
+
+    return changed;
+  }
+
+  // 해당 주간의 반복 수업(acad)과 수업 있는 날의 전후 1시간 이동시간(other)을 자동 동기화
+  function syncWeekClassesAndCommute(dd, weekDates) {
+    if (!dd || !Array.isArray(dd.blocks) || !Array.isArray(weekDates)) return false;
+    if (!dd.dismissedAutoBlocks || typeof dd.dismissedAutoBlocks !== 'object') dd.dismissedAutoBlocks = {};
+    if (!Array.isArray(dd.syncedCourseWeeks)) dd.syncedCourseWeeks = [];
+    let changed = false;
+
+    const mondayKey = weekDates[0];
+    if (mondayKey && dd.syncedCourseWeeks.indexOf(mondayKey) < 0) {
+      dd.syncedCourseWeeks.push(mondayKey);
+      changed = true;
+    }
+
+    (dd.courses || []).forEach(function (c) {
+      (c.schedule || []).forEach(function (s) {
+        if (s.day == null || !s.start || !s.end) return;
+        const date = weekDates[s.day];
+        if (!date) return;
+        const autoKey = 'course:' + c.id + ':' + date + ':' + s.start + '-' + s.end;
+        if (dd.dismissedAutoBlocks[autoKey]) return;
+
+        const existing = dd.blocks.find(function (b) {
+          if (!b || b.date !== date) return false;
+          if (b.autoKey === autoKey) return true;
+          return b.start && b.end &&
+            b.start.slice(11, 16) === s.start &&
+            b.end.slice(11, 16) === s.end &&
+            (b.courseId === c.id || b.source === 'course' || blockKind(dd, b) === 'acad');
+        });
+
+        if (existing) {
+          if (!existing.autoKey) {
+            existing.autoKey = autoKey;
+            existing.source = existing.source || 'course';
+            existing.courseId = existing.courseId || c.id;
+            changed = true;
+          }
+        } else {
+          dd.blocks.push({
+            id: genId('blk'),
+            title: c.name || '수업',
+            kind: 'acad',
+            subjectId: '',
+            taskId: '',
+            courseId: c.id,
+            date: date,
+            start: date + 'T' + s.start + ':00',
+            end: date + 'T' + s.end + ':00',
+            locked: false,
+            source: 'course',
+            autoKey: autoKey,
+          });
+          changed = true;
+        }
+      });
+    });
+
+    weekDates.forEach(function (k) {
+      if (reconcileDayCommuteBlocks(dd, k)) changed = true;
+    });
+
+    return changed;
+  }
+
+  function ensureWeekScheduleSynced(weekDates) {
+    let didChange = false;
+    Store.update(function (dd) {
+      didChange = syncWeekClassesAndCommute(dd, weekDates);
+    });
+    return didChange;
+  }
+
+  function dismissedAutoKeysInWeek(d, weekDates) {
+    const dis = (d && d.dismissedAutoBlocks) || {};
+    const keys = [];
+    Object.keys(dis).forEach(function (k) {
+      if (!dis[k]) return;
+      if (weekDates.some(function (dt) { return k.indexOf(dt) >= 0; })) keys.push(k);
+    });
+    return keys;
+  }
+
   // 과목 schedule → 해당 주의 고정 수업(acad) 블록 목록. 저장은 하지 않고 "있어야 할" 블록만 계산.
   function recurringClassBlocks(d, weekDates) {
     const out = [];
@@ -1850,17 +2086,20 @@
   }
   // 아직 시간표에 반영되지 않은 반복 수업(동일 날짜·시작·종료의 블록이 없는 것)만 추림.
   function pendingClassBlocks(d, weekDates) {
+    const dis = (d && d.dismissedAutoBlocks) || {};
     const existing = d.blocks.filter(function (b) { return weekDates.indexOf(b.date) >= 0; });
     return recurringClassBlocks(d, weekDates).filter(function (rc) {
+      const autoKey = 'course:' + rc.courseId + ':' + rc.date + ':' + rc.start.slice(11, 16) + '-' + rc.end.slice(11, 16);
+      if (dis[autoKey]) return false;
       return !existing.some(function (b) {
         return b.date === rc.date && b.start.slice(11, 16) === rc.start.slice(11, 16) && b.end.slice(11, 16) === rc.end.slice(11, 16)
           && (b.courseId === rc.courseId || blockKind(d, b) === 'acad');
       });
     });
   }
-  // 하루 활동 가능 구간 안에서, 기존 블록을 피한 빈 구간을 찾아 수험용으로 제안.
-  // bounds: {startH, endH, minSlotMin}. 과거 시간은 제외(오늘이면 현재 이후만).
+  // 하루 활동 가능 구간 안에서, 기존 블록(수업·이동시간·수험)을 피한 빈 구간을 찾아 수험용으로 제안.
   function findFreeSlots(d, weekDates, bounds) {
+    ensureWeekScheduleSynced(weekDates);
     bounds = bounds || {};
     const startH = bounds.startH != null ? bounds.startH : 9;
     const endH = bounds.endH != null ? bounds.endH : 22;
@@ -1875,7 +2114,7 @@
       if (k === todayKey() && now > cursor) {  // 오늘은 현재 시각 이후만
         cursor = new Date(Math.ceil(now.getTime() / (15 * 60000)) * (15 * 60000)); // 15분 단위 올림
       }
-      // 해당 날짜의 모든 블록(수업·수험·기타) + 아직 반영 안 된 반복 수업까지 장애물로 간주
+      // 해당 날짜의 모든 블록(수업·전후 이동시간·수험·기타)을 장애물로 간주
       const obstacles = d.blocks.filter(function (b) { return b.date === k; })
         .concat(pendingClassBlocks(d, weekDates).filter(function (b) { return b.date === k; }))
         .map(function (b) { return { s: new Date(b.start), e: new Date(b.end) }; })
@@ -1896,20 +2135,20 @@
     return slots.sort(function (a, b) { return b.min - a.min; }); // 큰 빈 시간 우선
   }
 
-  // 아직 반영 안 된 반복 수업을 이번 주 고정 수업(acad) 블록으로 한 번에 추가.
-  function applyRecurringClasses(d, weekDates, ctx) {
-    const pending = pendingClassBlocks(d, weekDates);
-    if (pending.length === 0) { ctx.toast('이미 모든 수업이 시간표에 반영돼 있어요.'); return; }
+  // 수동 삭제했던 수업·이동시간 블록을 해당 주간에 다시 채우기
+  function restoreWeekScheduleBlocks(weekDates, ctx) {
     Store.update(function (dd) {
-      pending.forEach(function (rc) {
-        dd.blocks.push({
-          id: Store.id('blk'), title: rc.title, kind: 'acad', subjectId: '', taskId: '',
-          courseId: rc.courseId, date: rc.date, start: rc.start, end: rc.end, locked: false, source: 'course',
+      if (dd.dismissedAutoBlocks) {
+        Object.keys(dd.dismissedAutoBlocks).forEach(function (k) {
+          if (weekDates.some(function (dt) { return k.indexOf(dt) >= 0; })) {
+            delete dd.dismissedAutoBlocks[k];
+          }
         });
-      });
+      }
+      syncWeekClassesAndCommute(dd, weekDates);
     });
     ctx.refresh();
-    ctx.toast(pending.length + '개 수업을 시간표에 반영했어요.');
+    ctx.toast('반복 수업과 전후 1시간 이동시간을 다시 채웠어요.');
   }
 
   // 빈 시간 제안 모달: 부족분을 채울 수 있는 빈 구간을 큰 순서로 보여 주고, 한 번에 수험 블록으로 추가.
@@ -1974,9 +2213,10 @@
   let weekOffset = 0;
   let mobileDayIdx = -1; // -1이면 오늘 요일 자동 선택, 7이면 주간 전체
   function renderWeek(root, ctx) {
-    const d = Store.data();
     const monday = getMonday(weekOffset);
     const weekDates = []; for (let i = 0; i < 7; i++) weekDates.push(dayKey(addDays(monday, i)));
+    ensureWeekScheduleSynced(weekDates);
+    const d = Store.data();
 
     const goalMin = (d.settings.weeklyExamGoalH || 30) * 60;
     const examBlocks = d.blocks.filter(function (b) { return weekDates.indexOf(b.date) >= 0 && blockKind(d, b) === 'exam'; });
@@ -2032,22 +2272,26 @@
 
     const side = el('div', { class: 'stack' });
 
-    // 묶음 D: 반복 수업 자동 반영
-    const pendingClasses = pendingClassBlocks(d, weekDates);
+    // 묶음 D: 반복 수업 + 전후 1시간 이동시간 자동 반영
+    const dismissedKeys = dismissedAutoKeysInWeek(d, weekDates);
     const classCard = el('div', { class: 'card' });
-    const classHead = el('div', { class: 'row between' }, [el('h3', { style: 'margin:0' }, '반복 수업')]);
+    const classHead = el('div', { class: 'row between' }, [el('h3', { style: 'margin:0' }, '반복 수업 · 이동시간')]);
     classCard.append(classHead);
     if ((d.courses || []).some(function (c) { return (c.schedule || []).length; })) {
-      if (pendingClasses.length) {
+      classCard.append(
+        el('p', { class: 'hint', style: 'margin:6px 0 0' }, '대학 수업이 있는 날은 첫 수업 앞 1시간과 마지막 수업 뒤 1시간이 이동시간으로 자동 추가됩니다.')
+      );
+      if (dismissedKeys.length) {
         classCard.append(
-          el('p', { class: 'hint', style: 'margin:6px 0' }, '이번 주에 아직 반영 안 된 수업이 ' + pendingClasses.length + '개 있어요.'),
-          el('button', { class: 'btn btn-sm btn-primary btn-block', onclick: function () { applyRecurringClasses(d, weekDates, ctx); } }, '수업 ' + pendingClasses.length + '개 시간표에 반영')
+          el('button', {
+            class: 'btn btn-sm btn-block',
+            style: 'margin-top:8px',
+            onclick: function () { restoreWeekScheduleBlocks(weekDates, ctx); },
+          }, '삭제한 수업·이동 ' + dismissedKeys.length + '개 다시 채우기')
         );
-      } else {
-        classCard.append(el('p', { class: 'hint', style: 'margin:6px 0 0' }, '등록된 수업이 이번 주 시간표에 모두 반영돼 있어요.'));
       }
     } else {
-      classCard.append(el('p', { class: 'hint', style: 'margin:6px 0' }, '대학 학업에서 과목의 반복 수업 시간을 등록하면, 이번 주 시간표에 자동으로 넣어드려요.'),
+      classCard.append(el('p', { class: 'hint', style: 'margin:6px 0' }, '대학 학업에서 과목의 반복 수업 시간을 등록하면 수업과 전후 1시간 이동시간을 자동으로 넣어드려요.'),
         el('button', { class: 'btn btn-sm btn-block', onclick: function () { ctx.navigate('academic'); } }, '수강 과목 등록하러 가기'));
     }
     side.append(classCard);
@@ -2201,7 +2445,7 @@
     const widthExpr = n === 1 ? 'calc(100% - 4px)' : 'calc((100% - ' + gapTotal + 'px) / ' + n + ')';
     const leftExpr = n === 1 ? '2px' : 'calc(2px + ' + col + ' * ((100% - ' + gapTotal + 'px) / ' + n + ' + 2px))';
 
-    const cls = 'tt-block ' + kind + (heightPx < 36 ? ' compact' : '') + (heightPx >= 60 ? ' tall' : '');
+    const cls = 'tt-block ' + kind + (b.source === 'commute' ? ' commute' : '') + (heightPx < 36 ? ' compact' : '') + (heightPx >= 60 ? ' tall' : '');
     const style = 'top:' + topPx + 'px;height:' + heightPx + 'px;left:' + leftExpr + ';width:' + widthExpr + ';';
 
     const children = [el('span', { class: 'tt-block-title' }, label)];
@@ -2257,8 +2501,9 @@
       } else {
         blocks.forEach(function (b) {
           const kind = blockKind(d, b);
+          const tagLabel = kind === 'exam' ? '수험' : kind === 'acad' ? '학업' : (b.source === 'commute' ? '이동' : '기타');
           card.append(el('div', { class: 'item', style: 'cursor:pointer', onclick: function () { openBlockEditor(null, ctx, null, { editBlock: b }); } }, [
-            el('span', { class: 'tag tag-' + (kind === 'exam' ? 'exam' : kind === 'acad' ? 'acad' : 'muted') }, kind === 'exam' ? '수험' : kind === 'acad' ? '학업' : '기타'),
+            el('span', { class: 'tag tag-' + (kind === 'exam' ? 'exam' : kind === 'acad' ? 'acad' : 'muted') }, tagLabel),
             el('div', { class: 'main' }, [
               el('div', { class: 'title' }, (b.locked ? '🔒 ' : '') + b.title),
               el('div', { class: 'meta' }, fmtTime(b.start) + '–' + fmtTime(b.end) + ' (' + fmtMin(minutesBetween(b.start, b.end)) + ')'),
@@ -2304,7 +2549,15 @@
     ]);
 
     const footer = [
-      edit ? el('button', { class: 'btn btn-danger', onclick: function () { Store.update(function (dd) { dd.blocks = dd.blocks.filter(function (x) { return x.id !== edit.id; }); }); m.close(); ctx.refresh(); ctx.toast('블록을 삭제했습니다.'); } }, '삭제') : null,
+      edit ? el('button', { class: 'btn btn-danger', onclick: function () {
+        Store.update(function (dd) {
+          if (!dd.dismissedAutoBlocks || typeof dd.dismissedAutoBlocks !== 'object') dd.dismissedAutoBlocks = {};
+          if (edit.autoKey) dd.dismissedAutoBlocks[edit.autoKey] = true;
+          dd.blocks = dd.blocks.filter(function (x) { return x.id !== edit.id; });
+          if (edit.date) reconcileDayCommuteBlocks(dd, edit.date);
+        });
+        m.close(); ctx.refresh(); ctx.toast('블록을 삭제했습니다.');
+      } }, '삭제') : null,
       el('span', { class: 'spacer' }),
       el('button', { class: 'btn', onclick: function () { m.close(); } }, '취소'),
       el('button', { class: 'btn btn-primary', onclick: save }, '저장'),
@@ -2321,8 +2574,24 @@
     }
     function doSave(t, title) {
       Store.update(function (dd) {
-        if (edit) { Object.assign(dd.blocks.find(function (x) { return x.id === edit.id; }), { title: title, kind: kindSel.value, subjectId: subjSel.value, taskId: taskSel.value, date: t.date, start: t.startIso, end: t.endIso, locked: lockInput.checked }); }
-        else dd.blocks.push({ id: Store.id('blk'), title: title, kind: kindSel.value, subjectId: subjSel.value, taskId: taskSel.value, date: t.date, start: t.startIso, end: t.endIso, locked: lockInput.checked });
+        const prevDate = edit ? edit.date : null;
+        if (edit) {
+          const target = dd.blocks.find(function (x) { return x.id === edit.id; });
+          if (target) {
+            if (target.source === 'commute' && kindSel.value !== 'other') {
+              if (!dd.dismissedAutoBlocks) dd.dismissedAutoBlocks = {};
+              if (target.autoKey) dd.dismissedAutoBlocks[target.autoKey] = true;
+              delete target.source;
+              delete target.commutePos;
+              delete target.autoKey;
+            }
+            Object.assign(target, { title: title, kind: kindSel.value, subjectId: subjSel.value, taskId: taskSel.value, date: t.date, start: t.startIso, end: t.endIso, locked: lockInput.checked, userEdited: true });
+          }
+        } else {
+          dd.blocks.push({ id: Store.id('blk'), title: title, kind: kindSel.value, subjectId: subjSel.value, taskId: taskSel.value, date: t.date, start: t.startIso, end: t.endIso, locked: lockInput.checked });
+        }
+        reconcileDayCommuteBlocks(dd, t.date);
+        if (prevDate && prevDate !== t.date) reconcileDayCommuteBlocks(dd, prevDate);
       });
       m.close(); ctx.refresh(); ctx.toast('계획을 저장했습니다.');
     }
@@ -2361,11 +2630,13 @@
       });
     }
   }
-  function blockKind(d, b) { if (b.kind) return b.kind; const s = d.subjects.find(function (x) { return x.id === b.subjectId; }); return s && s.kind === 'exam' ? 'exam' : 'other'; }
+  function blockKind(d, b) { if (b.kind) return b.kind; const s = (d.subjects || []).find(function (x) { return x.id === b.subjectId; }); return s && s.kind === 'exam' ? 'exam' : 'other'; }
   function summaryStat(label, val, color) { return el('div', {}, [el('div', { class: 'hint' }, label), el('div', { style: 'font-size:1.4rem;font-weight:800;' + (color ? 'color:' + color : '') }, val)]); }
   function legendRow(kind, label) {
     const sw = el('span', { style: 'display:inline-block;width:16px;height:16px;border-radius:4px;margin-right:8px;vertical-align:middle;' });
-    if (kind === 'exam') sw.style.background = 'var(--exam-bg)'; else if (kind === 'acad') sw.style.background = 'var(--acad-bg)'; else { sw.style.background = 'var(--bg)'; sw.style.border = '1px solid var(--border)'; }
+    if (kind === 'exam') sw.style.background = 'var(--exam-bg)';
+    else if (kind === 'acad') sw.style.background = 'var(--acad-bg)';
+    else { sw.style.background = 'var(--surface-soft)'; sw.style.border = '1px dashed var(--border-strong)'; }
     return el('div', { style: 'font-size:.9rem' }, [sw, label]);
   }
 
@@ -3647,13 +3918,47 @@
       el('div', { class: 'field' }, [el('label', {}, '반복 수업 시간'), schedWrap, el('button', { class: 'btn btn-sm', style: 'margin-top:8px', onclick: function () { c.schedule.push({ day: 0, start: '09:00', end: '10:30' }); renderSched(); } }, '+ 시간 추가')]),
     ]);
     const footer = [
-      !isNew ? el('button', { class: 'btn btn-danger', onclick: function () { Store.update(function (dd) { dd.courses = dd.courses.filter(function (x) { return x.id !== c.id; }); }); m.close(); ctx.refresh(); ctx.toast('삭제했습니다.'); } }, '삭제') : null,
+      !isNew ? el('button', { class: 'btn btn-danger', onclick: function () {
+        Store.update(function (dd) {
+          dd.courses = dd.courses.filter(function (x) { return x.id !== c.id; });
+          const curMondayKey = dayKey(getMonday(0));
+          const affectedDates = new Set();
+          dd.blocks = dd.blocks.filter(function (b) {
+            if (b && b.courseId === c.id && b.source === 'course' && !b.userEdited && !b.locked && b.date >= curMondayKey) {
+              affectedDates.add(b.date);
+              return false;
+            }
+            return true;
+          });
+          affectedDates.forEach(function (dt) { reconcileDayCommuteBlocks(dd, dt); });
+        });
+        m.close(); ctx.refresh(); ctx.toast('삭제했습니다.');
+      } }, '삭제') : null,
       el('span', { class: 'spacer' }),
       el('button', { class: 'btn', onclick: function () { m.close(); } }, '취소'),
       el('button', { class: 'btn btn-primary', onclick: function () {
         if (!name.value.trim()) { ctx.toast('과목명을 입력하세요.', 'warn'); return; }
         c.name = name.value.trim(); c.code = code.value.trim(); c.semester = semester.value; c.credits = clampNum(credits.value, 0, 30); c.room = room.value; c.link = link.value;
-        Store.update(function (dd) { if (isNew) { c.id = Store.id('course'); dd.courses.push(c); } else Object.assign(dd.courses.find(function (x) { return x.id === c.id; }), c); });
+        Store.update(function (dd) {
+          if (isNew) { c.id = Store.id('course'); dd.courses.push(c); }
+          else Object.assign(dd.courses.find(function (x) { return x.id === c.id; }), c);
+
+          // 이번 주 이후 시간표에서 해당 과목의 미편집 수업 블록을 갱신하고 전후 이동시간도 재조정
+          const curMondayKey = dayKey(getMonday(0));
+          const affectedDates = new Set();
+          dd.blocks = dd.blocks.filter(function (b) {
+            if (b && b.courseId === c.id && b.source === 'course' && !b.userEdited && !b.locked && b.date >= curMondayKey) {
+              affectedDates.add(b.date);
+              return false;
+            }
+            return true;
+          });
+          const weeksToSync = new Set([curMondayKey].concat((dd.syncedCourseWeeks || []).filter(function (wk) { return wk >= curMondayKey; })));
+          weeksToSync.forEach(function (wk) {
+            syncWeekClassesAndCommute(dd, weekDatesFromMonday(parseKey(wk)));
+          });
+          affectedDates.forEach(function (dt) { reconcileDayCommuteBlocks(dd, dt); });
+        });
         m.close(); ctx.refresh(); ctx.toast('저장했습니다.');
       } }, '저장'),
     ];
