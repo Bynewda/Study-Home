@@ -347,6 +347,19 @@
     };
   })();
 
+  // 응답이 안 오면 무한 대기하지 않도록 타임아웃을 건 fetch (기본 45초)
+  function fetchWithTimeout(url, opts, ms) {
+    opts = opts || {};
+    const ctl = new AbortController();
+    const t = setTimeout(function () { ctl.abort(); }, ms || 45000);
+    return fetch(url, Object.assign({}, opts, { signal: ctl.signal }))
+      .catch(function (e) {
+        if (e && e.name === 'AbortError') throw new Error('응답 시간이 초과되었습니다(45초). 네트워크 상태를 확인하거나 다시 시도하세요.');
+        throw e;
+      })
+      .finally(function () { clearTimeout(t); });
+  }
+
   // 각 제공업체 호출 — 사용자의 키로 브라우저에서 직접 요청 (방법 A)
   const AI_PROVIDERS = {
     gpt: {
@@ -354,7 +367,7 @@
       keyHint: 'OpenAI API 키 (sk-... 로 시작). platform.openai.com → API keys 에서 발급',
       keyUrl: 'https://platform.openai.com/api-keys',
       async send(key, history) {
-        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        const res = await fetchWithTimeout('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
           body: JSON.stringify({ model: this.model, messages: history.map(function (m) { return { role: m.role, content: m.content }; }) }),
@@ -373,7 +386,7 @@
       _resolved: null,
       _candidates: ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'],
       async _call(key, modelName, contents) {
-        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent', {
+        const res = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: JSON.stringify({ contents: contents }),
@@ -382,7 +395,7 @@
         return { ok: res.ok, status: res.status, data: data };
       },
       async _discover(key) {
-        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', { headers: { 'x-goog-api-key': key } });
+        const res = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models', { headers: { 'x-goog-api-key': key } });
         const data = await res.json();
         if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
         const usable = (data.models || []).filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; });
@@ -426,7 +439,7 @@
       keyHint: 'Anthropic API 키 (sk-ant-... 로 시작). console.anthropic.com → API Keys 에서 발급',
       keyUrl: 'https://console.anthropic.com/settings/keys',
       async send(key, history) {
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
+        const res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -2258,8 +2271,10 @@
     ctx.refresh();
 
     try {
-      // pending 메시지는 요청 history에서 제외
-      const history = AiStore.chat(provider).filter(function (m) { return !m.pending; });
+      // 요청 history에서 pending·과거 오류 메시지는 제외 (대화 흐름 오염 방지)
+      let history = AiStore.chat(provider).filter(function (m) { return !m.pending && !m.error; });
+      // 일부 API는 user로 시작하고 user/assistant가 번갈아야 하므로, 맨 앞의 비-user 메시지 제거
+      while (history.length && history[0].role !== 'user') history = history.slice(1);
       const answer = await p.send(key, history);
       AiStore.replaceLast(provider, { role: 'assistant', content: answer });
     } catch (e) {
