@@ -87,7 +87,8 @@ const StudyCloud = {
       const code = e && e.code ? e.code : "";
       let msg;
       if (code === "auth/unauthorized-domain") {
-        msg = "이 사이트 주소가 Firebase에 등록돼 있지 않습니다.\nFirebase 콘솔 → Authentication → Settings → 승인된 도메인에 현재 도메인(예: bynewda.github.io)을 추가하세요.";
+        const curHost = (typeof window !== "undefined" && window.location && window.location.hostname) ? window.location.hostname : "현재 도메인";
+        msg = "이 사이트 주소가 Firebase에 등록돼 있지 않습니다.\nFirebase 콘솔 → Authentication → Settings → 승인된 도메인에 현재 도메인(" + curHost + ")을 추가하세요.";
       } else if (code === "auth/popup-blocked") {
         msg = "브라우저가 로그인 팝업을 막았습니다. 팝업 차단을 해제하고 다시 시도하세요.";
       } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {

@@ -1,9 +1,10 @@
-# 로컬 전용 — GitHub에 올릴 필요 없는 파일
+# 로컬 전용 — GitHub·웹서버에 올릴 필요 없는 파일
+*.bat
 server.ps1
-start-server.bat
 접속방법.md
 깃허브배포방법.md
 파이어베이스설정.md
+새주소배포방법.md
 
 # 임시/시스템 파일
 _*.txt

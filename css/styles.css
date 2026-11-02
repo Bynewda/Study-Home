@@ -482,8 +482,8 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.7; }
 
 /* 인쇄용 주간 보기 (보고서 8쪽) */
 @media print {
-  .sidebar, .topbar, .toast-wrap, .focus-banner, .no-print { display: none !important; }
-  .app { grid-template-columns: 1fr; }
+  .sidebar, .topbar, .toast-wrap, .focus-banner, .ai-widget-root, .no-print { display: none !important; }
+  .app, .app.ai-docked { grid-template-columns: 1fr !important; }
   .content { padding: 0; }
   .card { box-shadow: none; border: 1px solid #ccc; }
 }
@@ -535,3 +535,147 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.7; }
    큰 외곽선이 보이지 않도록 함 (키보드 탭 이동 시 각 요소 초점은 유지) */
 .content:focus { outline: none; }
 .content:focus-visible { outline: none; }
+
+/* =========================================================================
+   전역 우측 AI 미니 채팅창 / 도킹 사이드 패널 (모든 페이지 공통)
+   ========================================================================= */
+.ai-widget-root {
+  position: fixed;
+  right: 20px;
+  bottom: 64px;
+  z-index: 120;
+}
+.ai-widget-root.hidden { display: none !important; }
+
+.ai-fab {
+  display: inline-flex; align-items: center; gap: 8px;
+  min-height: 46px; padding: 0 18px;
+  border-radius: 999px; border: 1px solid var(--accent);
+  background: var(--accent); color: var(--on-accent);
+  font-family: inherit; font-size: .92rem; font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(20, 35, 28, .22);
+  transition: transform .12s, background .12s, box-shadow .12s;
+}
+.ai-fab:hover { background: var(--accent-strong); transform: translateY(-1px); }
+.ai-fab .ico { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; }
+
+.ai-mini {
+  width: 368px;
+  max-width: calc(100vw - 24px);
+  height: 520px;
+  max-height: calc(100vh - 120px);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 36px rgba(20, 35, 28, .2);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ai-mini-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.ai-mini-title {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 800; font-size: .92rem; color: var(--text);
+  min-width: 0; white-space: nowrap;
+}
+.ai-mini-title .ico { width: 18px; height: 18px; color: var(--accent); display: inline-flex; align-items: center; justify-content: center; }
+.ai-mini-actions { display: flex; align-items: center; gap: 2px; }
+.ai-icon-btn {
+  width: 30px; height: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 7px; border: 1px solid transparent;
+  background: transparent; color: var(--text-sub);
+  font-family: inherit; font-size: .85rem; cursor: pointer;
+  transition: background .1s, color .1s;
+}
+.ai-icon-btn:hover { background: var(--surface); color: var(--text); border-color: var(--border); }
+.ai-icon-btn.active { background: var(--exam-bg); color: var(--exam-fg); border-color: var(--border); }
+.ai-icon-btn .ico { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
+.ai-icon-btn .ico svg { width: 16px; height: 16px; }
+
+.ai-mini-bar {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--surface);
+  flex: none;
+}
+.ai-prov-row { display: flex; gap: 4px; }
+.ai-prov-pill {
+  flex: 1; min-height: 30px; padding: 0 8px;
+  border-radius: 7px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text-sub);
+  font-family: inherit; font-size: .8rem; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+}
+.ai-prov-pill[aria-selected="true"] {
+  background: var(--accent); color: var(--on-accent); border-color: var(--accent);
+}
+.ai-model-row { display: flex; gap: 6px; align-items: center; }
+.ai-model-row select {
+  min-height: 30px; height: 30px; padding: 2px 8px;
+  font-size: .78rem; border-radius: 7px;
+}
+
+.ai-mini-body {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.ai-mini-foot {
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  display: flex; gap: 6px; align-items: flex-end;
+  flex: none;
+}
+.ai-mini-foot textarea {
+  flex: 1; min-height: 38px; max-height: 108px;
+  padding: 7px 10px; font-size: .88rem; line-height: 1.45;
+  resize: vertical;
+}
+.ai-mini-foot .btn { min-height: 38px; padding: 0 12px; font-size: .85rem; flex: none; }
+
+/* 데스크톱 도킹(우측 패널 고정) 모드 */
+@media (min-width: 1200px) {
+  .app.ai-docked {
+    grid-template-columns: 264px minmax(0, 1fr) 368px;
+  }
+  .app.ai-docked .ai-widget-root {
+    position: sticky;
+    top: 0;
+    right: auto;
+    bottom: auto;
+    height: 100vh;
+    z-index: 25;
+  }
+  .app.ai-docked .ai-mini {
+    width: 100%;
+    max-width: none;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    border-top: none;
+    border-right: none;
+    border-bottom: none;
+    border-left: 1px solid var(--border);
+    box-shadow: none;
+  }
+}
+@media (max-width: 1199px) {
+  .ai-dock-only { display: none !important; }
+}
+@media (max-width: 767px) {
+  .ai-widget-root { right: 12px; bottom: 58px; }
+  .ai-mini { width: calc(100vw - 24px); height: min(70vh, 480px); }
+}

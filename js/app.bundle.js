@@ -51,6 +51,11 @@
     logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
     ai:     '<path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/><path d="M12 7.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/>',
+    key:    '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L20 3"/><path d="M16 7l3 3"/><path d="M18.5 4.5l2.5 2.5"/>',
+    trash:  '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/>',
+    dock:   '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
+    minimize:'<path d="M5 12h14"/>',
+    expand: '<path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>',
   };
   function svgIcon(name) {
     const span = el('span', { class: 'ico', 'aria-hidden': 'true' });
@@ -322,14 +327,36 @@
         → Firebase 동기화를 켜도 키/대화는 절대 클라우드로 올라가지 않습니다.
      ======================================================================= */
   const AI_STORAGE_KEY = 'patent-study-home:ai:v1';
+  const GEMINI_MODELS = [
+    { id: 'gemini-4-argon', label: 'Gemini 4 Argon (추론 · 유료 키)' },
+    { id: 'flash-auto',     label: 'Gemini Flash (빠름 · 무료 호환)' },
+  ];
+  const GEMINI_THINKING_LEVELS = [
+    { id: 'LOW',    label: '추론: 낮음' },
+    { id: 'MEDIUM', label: '추론: 보통' },
+    { id: 'HIGH',   label: '추론: 높음' },
+  ];
   const AiStore = (function () {
     let _d = null;
-    function def() { return { keys: { gpt: '', gemini: '', claude: '' }, provider: 'gpt', chats: { gpt: [], gemini: [], claude: [] } }; }
+    function def() {
+      const desktopDefault = typeof window !== 'undefined' ? window.innerWidth >= 900 : true;
+      return {
+        keys: { gpt: '', gemini: '', claude: '' },
+        provider: 'gemini',
+        geminiModel: 'gemini-4-argon',
+        geminiThinking: 'MEDIUM',
+        widgetOpen: desktopDefault,
+        widgetDocked: false,
+        chats: { gpt: [], gemini: [], claude: [] },
+      };
+    }
     function load() {
       try { const raw = localStorage.getItem(AI_STORAGE_KEY); _d = raw ? Object.assign(def(), JSON.parse(raw)) : def(); }
       catch (e) { _d = def(); }
       _d.keys = Object.assign({ gpt: '', gemini: '', claude: '' }, _d.keys || {});
       _d.chats = Object.assign({ gpt: [], gemini: [], claude: [] }, _d.chats || {});
+      if (!GEMINI_MODELS.some(function (m) { return m.id === _d.geminiModel; })) _d.geminiModel = 'gemini-4-argon';
+      if (!GEMINI_THINKING_LEVELS.some(function (t) { return t.id === _d.geminiThinking; })) _d.geminiThinking = 'MEDIUM';
     }
     function persist() { try { localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(_d)); } catch (e) { console.error('AI 저장 실패', e); } }
     return {
@@ -340,21 +367,42 @@
       hasKey: function (p) { return !!this.getKey(p); },
       provider: function () { return _d.provider; },
       setProvider: function (p) { _d.provider = p; persist(); },
+      geminiModel: function () { return _d.geminiModel || 'gemini-4-argon'; },
+      setGeminiModel: function (m) { _d.geminiModel = m; persist(); },
+      geminiThinking: function () { return _d.geminiThinking || 'MEDIUM'; },
+      setGeminiThinking: function (lv) { _d.geminiThinking = lv; persist(); },
+      widgetOpen: function () { return !!_d.widgetOpen; },
+      setWidgetOpen: function (open) { _d.widgetOpen = !!open; persist(); },
+      widgetDocked: function () { return !!_d.widgetDocked; },
+      setWidgetDocked: function (docked) { _d.widgetDocked = !!docked; persist(); },
       chat: function (p) { return _d.chats[p] || (_d.chats[p] = []); },
-      pushMessage: function (p, msg) { this.chat(p).push(msg); persist(); },
+      pushMessage: function (p, msg) {
+        const c = this.chat(p);
+        c.push(msg);
+        // 오래된 메시지의 apiParts(서명 데이터)는 최근 6개만 남겨 localStorage 용량 보호
+        let sigCount = 0;
+        for (let i = c.length - 1; i >= 0; i--) {
+          if (c[i] && c[i].apiParts) {
+            sigCount++;
+            if (sigCount > 6) delete c[i].apiParts;
+          }
+        }
+        persist();
+      },
       replaceLast: function (p, msg) { const c = this.chat(p); c[c.length - 1] = msg; persist(); },
       clearChat: function (p) { _d.chats[p] = []; persist(); },
     };
   })();
 
-  // 응답이 안 오면 무한 대기하지 않도록 타임아웃을 건 fetch (기본 45초)
+  // 응답이 안 오면 무한 대기하지 않도록 타임아웃을 건 fetch (기본 45초, 추론 모델은 별도 지정)
   function fetchWithTimeout(url, opts, ms) {
     opts = opts || {};
     const ctl = new AbortController();
+    const limitSec = Math.round((ms || 45000) / 1000);
     const t = setTimeout(function () { ctl.abort(); }, ms || 45000);
     return fetch(url, Object.assign({}, opts, { signal: ctl.signal }))
       .catch(function (e) {
-        if (e && e.name === 'AbortError') throw new Error('응답 시간이 초과되었습니다(45초). 네트워크 상태를 확인하거나 다시 시도하세요.');
+        if (e && e.name === 'AbortError') throw new Error('응답 시간이 초과되었습니다(' + limitSec + '초). 네트워크 상태를 확인하거나 추론 수준을 낮춰 다시 시도하세요.');
         throw e;
       })
       .finally(function () { clearTimeout(t); });
@@ -364,6 +412,7 @@
   const AI_PROVIDERS = {
     gpt: {
       name: 'ChatGPT', vendor: 'OpenAI', badge: 'GPT', model: 'gpt-4o-mini',
+      modelLabel: function () { return this.model; },
       keyHint: 'OpenAI API 키 (sk-... 로 시작). platform.openai.com → API keys 에서 발급',
       keyUrl: 'https://platform.openai.com/api-keys',
       async send(key, history) {
@@ -374,68 +423,136 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
-        return data.choices[0].message.content;
+        return { text: data.choices[0].message.content };
       },
     },
     gemini: {
-      name: 'Gemini', vendor: 'Google', badge: 'G', model: 'gemini-flash-latest',
-      keyHint: 'Google AI Studio API 키. aistudio.google.com → Get API key 에서 발급',
+      name: 'Gemini', vendor: 'Google', badge: 'G', model: 'gemini-4-argon',
+      modelLabel: function () {
+        if (AiStore.geminiModel() === 'gemini-4-argon') return 'gemini-4-argon · ' + AiStore.geminiThinking();
+        return this._resolvedFlash || 'gemini-flash';
+      },
+      keyHint: 'Google AI Studio API 키 (aistudio.google.com 발급). ※ Gemini 4 Argon은 결제(Billing)가 연결된 유료 키에서만 동작하며, 무료 키는 Gemini Flash를 선택하세요.',
       keyUrl: 'https://aistudio.google.com/app/apikey',
-      // 구글이 모델 버전을 자주 바꿔 특정 이름이 사라질 수 있어, 우선순위대로 시도하고
-      // 그래도 안 되면 이 키에서 쓸 수 있는 모델을 조회(ListModels)해 자동 선택한다.
-      _resolved: null,
-      _candidates: ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'],
-      async _call(key, modelName, contents) {
-        const res = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent', {
+      _resolvedFlash: null,
+      _resolvedArgon: null,
+      _flashCandidates: ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.0-flash'],
+      async _call(key, apiVer, modelName, contents, generationConfig, timeoutMs) {
+        const payload = { contents: contents };
+        if (generationConfig) payload.generationConfig = generationConfig;
+        const res = await fetchWithTimeout('https://generativelanguage.googleapis.com/' + apiVer + '/models/' + modelName + ':generateContent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-          body: JSON.stringify({ contents: contents }),
-        });
+          body: JSON.stringify(payload),
+        }, timeoutMs);
         const data = await res.json();
         return { ok: res.ok, status: res.status, data: data };
       },
-      async _discover(key) {
+      async _listUsable(key) {
         const res = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models', { headers: { 'x-goog-api-key': key } });
         const data = await res.json();
         if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
-        const usable = (data.models || []).filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; });
-        // flash 계열을 먼저, 그다음 아무거나
-        const pick = usable.find(function (m) { return /flash/.test(m.name) && !/thinking|image|tts|live/.test(m.name); }) || usable[0];
+        return (data.models || []).filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; });
+      },
+      async _discoverFlash(key) {
+        const usable = await this._listUsable(key);
+        const pick = usable.find(function (m) { return /flash/i.test(m.name) && !/thinking|image|tts|live/i.test(m.name); }) || usable[0];
         if (!pick) throw new Error('이 키로 쓸 수 있는 generateContent 모델이 없습니다.');
         return pick.name.replace(/^models\//, '');
       },
-      _extract(data) {
+      async _discoverArgon(key) {
+        const usable = await this._listUsable(key);
+        const pick = usable.find(function (m) { return /argon/i.test(m.name); });
+        return pick ? pick.name.replace(/^models\//, '') : null;
+      },
+      _extract(data, modelTag) {
         const cand = data.candidates && data.candidates[0];
         if (!cand || !cand.content || !cand.content.parts) throw new Error('응답이 비었습니다 (안전 필터 등으로 차단되었을 수 있어요).');
-        return cand.content.parts.map(function (p) { return p.text || ''; }).join('');
+        const parts = cand.content.parts;
+        // 추론 모델의 내부 생각(thought: true) 파트는 화면 표시에서 제외하고 최종 답변만 추출
+        const visible = parts.filter(function (p) { return !p.thought; });
+        const text = (visible.length ? visible : parts).map(function (p) { return p.text || ''; }).join('');
+        // 멀티턴 thoughtSignature가 포함된 경우 다음 턴 호환을 위해 보존
+        const hasSig = parts.some(function (p) { return !!p.thoughtSignature; });
+        return { text: text, apiParts: hasSig ? parts : null, geminiModel: modelTag };
+      },
+      _buildContents(history, targetTag, useApiParts) {
+        return history.map(function (m) {
+          if (m.role === 'assistant') {
+            if (useApiParts && m.apiParts && m.geminiModel === targetTag) return { role: 'model', parts: m.apiParts };
+            return { role: 'model', parts: [{ text: m.content }] };
+          }
+          return { role: 'user', parts: [{ text: m.content }] };
+        });
+      },
+      async _callWithFallbackParts(key, apiVer, modelName, history, tag, genCfg, timeoutMs) {
+        const richContents = this._buildContents(history, tag, true);
+        const hasRich = history.some(function (m) { return m.role === 'assistant' && m.apiParts && m.geminiModel === tag; });
+        let r = await this._call(key, apiVer, modelName, richContents, genCfg, timeoutMs);
+        if (!r.ok && r.status === 400 && hasRich) {
+          // 서명 포맷 불일치 시 순수 텍스트 히스토리로 자동 재시도
+          const plainContents = this._buildContents(history, tag, false);
+          r = await this._call(key, apiVer, modelName, plainContents, genCfg, timeoutMs);
+        }
+        return r;
       },
       async send(key, history) {
-        const contents = history.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; });
-        // 이미 이 세션에서 쓸 모델을 찾았으면 그걸로
-        if (this._resolved) {
-          const r = await this._call(key, this._resolved, contents);
-          if (r.ok) return this._extract(r.data);
-          // 해결했던 모델이 또 막히면 캐시 초기화 후 아래 로직으로
-          this._resolved = null;
+        const mode = AiStore.geminiModel();
+
+        // 1) Gemini 4 Argon (추론 모델) 호출 경로
+        if (mode === 'gemini-4-argon') {
+          const level = AiStore.geminiThinking() || 'MEDIUM';
+          const genCfg = { thinkingConfig: { thinkingLevel: level } };
+          const timeoutMs = 120000;
+          const target = this._resolvedArgon || 'gemini-4-argon';
+
+          let r = await this._callWithFallbackParts(key, 'v1beta', target, history, 'argon', genCfg, timeoutMs);
+          if (r.ok) { this._resolvedArgon = target; return this._extract(r.data, 'argon'); }
+
+          let errMsg = (r.data && r.data.error && r.data.error.message) || ('HTTP ' + r.status);
+          // v1beta에서 모델을 못 찾으면 v1beta1 및 ListModels 내 Argon 모델명 자동 탐색
+          if (/not found|not supported|is not found|unsupported/i.test(errMsg)) {
+            const rBeta1 = await this._callWithFallbackParts(key, 'v1beta1', 'gemini-4-argon', history, 'argon', genCfg, timeoutMs);
+            if (rBeta1.ok) return this._extract(rBeta1.data, 'argon');
+
+            const foundArgon = await this._discoverArgon(key).catch(function () { return null; });
+            if (foundArgon) {
+              const rDisc = await this._callWithFallbackParts(key, 'v1beta', foundArgon, history, 'argon', genCfg, timeoutMs);
+              if (rDisc.ok) { this._resolvedArgon = foundArgon; return this._extract(rDisc.data, 'argon'); }
+              errMsg = (rDisc.data && rDisc.data.error && rDisc.data.error.message) || errMsg;
+            } else {
+              throw new Error('현재 API 키에서 Gemini 4 Argon(gemini-4-argon) 모델을 사용할 수 없습니다. Argon 모델은 Google AI Studio에서 유료 결제(Billing)가 연결된 키에서만 제공됩니다. 무료 키를 사용 중이라면 모델 선택을 "Gemini Flash"로 변경해 주세요.');
+            }
+          }
+          if (r.status === 429 || r.status === 403 || /quota|billing|free tier|limit:\s*0|permission|resource.*exhausted/i.test(errMsg)) {
+            throw new Error('Gemini 4 Argon 호출이 제한되었습니다(무료 티어 미지원 또는 한도 초과). 무료 API 키를 사용 중이라면 모델 선택을 "Gemini Flash (무료 호환)"로 바꾸거나 Google AI Studio에서 결제(Billing)를 연결해 주세요. [' + errMsg + ']');
+          }
+          throw new Error(errMsg);
+        }
+
+        // 2) Gemini Flash 자동 선택 경로 (무료 티어 호환)
+        if (this._resolvedFlash) {
+          const r = await this._callWithFallbackParts(key, 'v1beta', this._resolvedFlash, history, 'flash', null, 45000);
+          if (r.ok) return this._extract(r.data, 'flash');
+          this._resolvedFlash = null;
         }
         let lastErr = null;
-        for (const name of this._candidates) {
-          const r = await this._call(key, name, contents);
-          if (r.ok) { this._resolved = name; return this._extract(r.data); }
+        for (const name of this._flashCandidates) {
+          const r = await this._callWithFallbackParts(key, 'v1beta', name, history, 'flash', null, 45000);
+          if (r.ok) { this._resolvedFlash = name; return this._extract(r.data, 'flash'); }
           lastErr = (r.data && r.data.error && r.data.error.message) || ('HTTP ' + r.status);
-          // "모델 없음/미지원"이면 다음 후보로, 그 외(키·한도 오류)는 즉시 중단
           if (!/not found|not supported|is not found|unsupported/i.test(lastErr)) throw new Error(lastErr);
         }
-        // 후보가 전부 실패 → 키에서 쓸 수 있는 모델을 직접 조회해 한 번 더 시도
-        const discovered = await this._discover(key);
-        this._resolved = discovered;
-        const r2 = await this._call(key, discovered, contents);
-        if (r2.ok) return this._extract(r2.data);
+        const discovered = await this._discoverFlash(key);
+        this._resolvedFlash = discovered;
+        const r2 = await this._callWithFallbackParts(key, 'v1beta', discovered, history, 'flash', null, 45000);
+        if (r2.ok) return this._extract(r2.data, 'flash');
         throw new Error((r2.data && r2.data.error && r2.data.error.message) || lastErr || ('HTTP ' + r2.status));
       },
     },
     claude: {
       name: 'Claude', vendor: 'Anthropic', badge: 'C', model: 'claude-3-5-sonnet-20241022',
+      modelLabel: function () { return this.model; },
       keyHint: 'Anthropic API 키 (sk-ant-... 로 시작). console.anthropic.com → API Keys 에서 발급',
       keyUrl: 'https://console.anthropic.com/settings/keys',
       async send(key, history) {
@@ -451,7 +568,7 @@
         });
         const data = await res.json();
         if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
-        return (data.content || []).map(function (b) { return b.text || ''; }).join('');
+        return { text: (data.content || []).map(function (b) { return b.text || ''; }).join('') };
       },
     },
   };
@@ -2119,8 +2236,7 @@
   }
 
   /* =======================================================================
-     13-b. AI 도구 — 자주 쓰는 AI 서비스 바로가기 모음
-     각 서비스의 공식 페이지를 새 탭으로 엽니다 (API 연동 아님).
+     13-b. AI 도구 페이지 & 전역 우측 AI 미니 채팅창 (모든 페이지 공통)
      ======================================================================= */
   // 채팅 지원 모델(키 입력형) + 링크 전용(Manus/Kiro)
   const AI_LINK_TOOLS = [
@@ -2128,9 +2244,45 @@
     { id: 'kiro',  name: 'Kiro',  vendor: 'AWS',              url: 'https://app.kiro.dev/', desc: '스펙 기반으로 코드를 만드는 개발용 에이전트입니다.', badge: 'K' },
   ];
   let _aiSending = false;
+  let _widgetShowKey = false;
+
+  // 본문 페이지(#content)를 초기화하지 않고 우측 채팅창(및 AI 페이지일 때만 본문)을 갱신
+  function refreshAiSurfaces(opts) {
+    opts = opts || {};
+    renderAiWidget({ focusInput: !!opts.focusWidget });
+    updateTopbarAiBtn();
+    if (current === 'ai') refresh();
+  }
+
+  function buildGeminiModelControls(compact) {
+    const isArgon = AiStore.geminiModel() === 'gemini-4-argon';
+    const modelSel = el('select', { 'aria-label': 'Gemini 모델 선택', style: compact ? 'flex:1;min-width:0' : 'width:auto;min-width:240px;min-height:36px;padding:4px 10px;font-size:.88rem' });
+    GEMINI_MODELS.forEach(function (m) {
+      modelSel.append(el('option', { value: m.id, selected: m.id === AiStore.geminiModel() }, m.label));
+    });
+    modelSel.onchange = function () {
+      AiStore.setGeminiModel(modelSel.value);
+      refreshAiSurfaces();
+    };
+
+    const row = el('div', { class: compact ? 'ai-model-row' : 'row', style: compact ? '' : 'gap:8px;flex-wrap:wrap' }, [modelSel]);
+    if (isArgon) {
+      const thinkSel = el('select', { 'aria-label': '추론 깊이 선택', style: compact ? 'width:98px;flex:none' : 'width:auto;min-width:116px;min-height:36px;padding:4px 10px;font-size:.88rem' });
+      GEMINI_THINKING_LEVELS.forEach(function (lv) {
+        thinkSel.append(el('option', { value: lv.id, selected: lv.id === AiStore.geminiThinking() }, lv.label));
+      });
+      thinkSel.onchange = function () {
+        AiStore.setGeminiThinking(thinkSel.value);
+        refreshAiSurfaces();
+      };
+      row.append(thinkSel);
+    }
+    return row;
+  }
+
   function renderAiTools(root, ctx) {
     const provider = AiStore.provider();
-    root.append(el('p', { class: 'page-intro' }, '여기서 바로 AI와 대화할 수 있습니다. 쓰려는 모델의 API 키를 한 번 입력하면 이 브라우저에 저장되고, 질문·답변이 아래 채팅창에 바로 표시됩니다.'));
+    root.append(el('p', { class: 'page-intro' }, '여기서 넓게 대화하거나, 다른 페이지(노트·답안·주간 계획 등) 오른쪽의 작은 AI 채팅창에서도 페이지를 닫지 않고 똑같이 이어서 질문할 수 있습니다.'));
 
     // 모델 선택 탭
     const tabs = el('div', { class: 'tabs', role: 'tablist', style: 'margin-bottom:12px' });
@@ -2143,6 +2295,16 @@
     root.append(tabs);
 
     const p = AI_PROVIDERS[provider];
+
+    if (provider === 'gemini') {
+      const modelBox = el('div', { class: 'row between', style: 'margin-bottom:12px;gap:8px;flex-wrap:wrap' }, [
+        buildGeminiModelControls(false),
+        el('span', { class: 'hint' }, AiStore.geminiModel() === 'gemini-4-argon'
+          ? '※ Gemini 4 Argon은 유료 결제(Billing) 연결 API 키 전용입니다.'
+          : '무료 등급 API 키에서도 바로 사용할 수 있는 빠른 모델입니다.'),
+      ]);
+      root.append(modelBox);
+    }
 
     // 키가 없으면 키 입력 안내 카드
     if (!AiStore.hasKey(provider)) {
@@ -2191,12 +2353,12 @@
       el('button', { class: 'btn btn-primary', onclick: function () {
         const v = input.value.trim();
         if (!v) { ctx.toast('API 키를 입력하세요.', 'warn'); return; }
-        AiStore.setKey(provider, v); ctx.refresh(); ctx.toast(p.name + ' 키를 저장했습니다.');
+        AiStore.setKey(provider, v); _widgetShowKey = false; refreshAiSurfaces(); ctx.toast(p.name + ' 키를 저장했습니다.');
       } }, '저장'),
     ]);
     card.append(row);
     if (AiStore.hasKey(provider)) {
-      card.append(el('button', { class: 'btn btn-sm btn-danger', style: 'margin-top:8px', onclick: function () { AiStore.setKey(provider, ''); ctx.refresh(); ctx.toast(p.name + ' 키를 삭제했습니다.'); } }, '키 삭제'));
+      card.append(el('button', { class: 'btn btn-sm btn-danger', style: 'margin-top:8px', onclick: function () { AiStore.setKey(provider, ''); refreshAiSurfaces(); ctx.toast(p.name + ' 키를 삭제했습니다.'); } }, '키 삭제'));
     }
     card.append(el('p', { class: 'hint', style: 'margin-top:8px' }, ['키 발급: ', el('a', { href: p.keyUrl, target: '_blank', rel: 'noopener noreferrer' }, p.keyUrl + ' ↗')]));
     return card;
@@ -2210,9 +2372,9 @@
     wrap.append(el('div', { class: 'row between', style: 'padding:12px 16px;border-bottom:1px solid var(--border)' }, [
       el('div', { class: 'row', style: 'gap:8px;align-items:center' }, [
         el('span', { 'aria-hidden': 'true', style: 'width:30px;height:30px;border-radius:8px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem' }, p.badge),
-        el('div', {}, [el('strong', {}, p.name), el('span', { class: 'hint', style: 'margin-left:8px;font-size:.75rem' }, p.model)]),
+        el('div', {}, [el('strong', {}, p.name), el('span', { class: 'hint', style: 'margin-left:8px;font-size:.75rem' }, p.modelLabel())]),
       ]),
-      el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { AiStore.clearChat(provider); ctx.refresh(); } }, '대화 지우기'),
+      el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { AiStore.clearChat(provider); refreshAiSurfaces(); } }, '대화 지우기'),
     ]));
 
     // 메시지 영역
@@ -2221,7 +2383,7 @@
     if (history.length === 0) {
       msgs.append(el('div', { class: 'empty', style: 'padding:32px 0;margin:auto' }, [el('span', { class: 'emoji' }, '💬'), el('h3', {}, p.name + '에게 물어보세요'), el('p', {}, '예: "진보성 판단에서 사후적 고찰 금지가 뭔지 쉽게 설명해줘"')]));
     } else {
-      history.forEach(function (m) { msgs.append(renderAiMessage(m)); });
+      history.forEach(function (m) { msgs.append(renderAiMessage(m, false)); });
     }
     wrap.append(msgs);
 
@@ -2237,7 +2399,7 @@
       sendMessage(provider, text, ctx);
     }
     sendBtn.onclick = doSend;
-    ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
+    ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); doSend(); } });
 
     wrap.append(el('div', { class: 'row', style: 'gap:8px;padding:12px 16px;border-top:1px solid var(--border);align-items:flex-end' }, [ta, sendBtn]));
 
@@ -2246,18 +2408,195 @@
     return wrap;
   }
 
-  function renderAiMessage(m) {
+  function renderAiMessage(m, mini) {
     const mine = m.role === 'user';
+    const pad = mini ? '8px 11px' : '10px 14px';
+    const fs = mini ? 'font-size:.87rem;line-height:1.55;' : 'line-height:1.6;';
+    const text = m.content || (m.pending ? '답변 생성 중…' : '');
     const bubble = el('div', {
       class: 'ai-bubble ' + (mine ? 'me' : 'bot') + (m.error ? ' err' : ''),
-      style: 'max-width:82%;padding:10px 14px;border-radius:14px;white-space:pre-wrap;word-break:break-word;line-height:1.6;'
+      style: 'max-width:86%;padding:' + pad + ';border-radius:12px;white-space:pre-wrap;word-break:break-word;' + fs
         + (mine
           ? 'align-self:flex-end;background:var(--accent);color:var(--on-accent);border-bottom-right-radius:4px'
           : (m.error
             ? 'align-self:flex-start;background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-fg);border-bottom-left-radius:4px'
             : 'align-self:flex-start;background:var(--bg);border:1px solid var(--border);border-bottom-left-radius:4px')),
-    }, m.content || (m.pending ? '…' : ''));
+    }, text);
     return bubble;
+  }
+
+  // 모든 페이지 오른쪽에서 열 수 있는 컴팩트 AI 채팅 위젯
+  function renderAiWidget(opts) {
+    opts = opts || {};
+    const root = document.getElementById('ai-widget-root');
+    const app = document.getElementById('app-shell');
+    if (!root) return;
+
+    // 'AI 도구' 전체 페이지에서는 본문 채팅창과 중복되지 않도록 미니 위젯 숨김
+    if (current === 'ai') {
+      root.classList.add('hidden');
+      if (app) app.classList.remove('ai-docked');
+      clear(root);
+      return;
+    }
+    root.classList.remove('hidden');
+
+    const isOpen = AiStore.widgetOpen();
+    const isDocked = isOpen && AiStore.widgetDocked();
+    if (app) app.classList.toggle('ai-docked', isDocked);
+    clear(root);
+
+    if (!isOpen) {
+      root.append(el('button', {
+        class: 'ai-fab',
+        'aria-label': 'AI 채팅창 열기',
+        onclick: function () { _widgetShowKey = false; AiStore.setWidgetOpen(true); renderAiWidget({ focusInput: true }); updateTopbarAiBtn(); },
+      }, [svgIcon('ai'), _aiSending ? 'AI 답변 중…' : 'AI 채팅']));
+      return;
+    }
+
+    const provider = AiStore.provider();
+    const p = AI_PROVIDERS[provider];
+    const hasKey = AiStore.hasKey(provider);
+    const showKey = !hasKey || _widgetShowKey;
+
+    const panel = el('section', { class: 'ai-mini', 'aria-label': 'AI 도우미 채팅창' });
+
+    // 1) 상단 헤더
+    const head = el('div', { class: 'ai-mini-head' }, [
+      el('div', { class: 'ai-mini-title' }, [svgIcon('ai'), 'AI 도우미']),
+      el('div', { class: 'ai-mini-actions' }, [
+        el('button', {
+          class: 'ai-icon-btn' + (showKey ? ' active' : ''),
+          title: p.name + ' API 키 설정',
+          'aria-label': 'API 키 설정',
+          onclick: function () { if (hasKey) { _widgetShowKey = !_widgetShowKey; renderAiWidget({ focusInput: !_widgetShowKey }); } },
+        }, [svgIcon('key')]),
+        el('button', {
+          class: 'ai-icon-btn',
+          title: '현재 대화 비우기',
+          'aria-label': '대화 비우기',
+          onclick: function () {
+            if (!AiStore.chat(provider).length) return;
+            AiStore.clearChat(provider);
+            renderAiWidget({ focusInput: true });
+            toast(p.name + ' 대화를 비웠습니다.');
+          },
+        }, [svgIcon('trash')]),
+        el('button', {
+          class: 'ai-icon-btn ai-dock-only' + (isDocked ? ' active' : ''),
+          title: isDocked ? '작은 플로팅 창으로 전환' : '오른쪽 패널로 고정',
+          'aria-label': isDocked ? '작은 창으로 전환' : '오른쪽 패널로 고정',
+          onclick: function () { AiStore.setWidgetDocked(!AiStore.widgetDocked()); renderAiWidget(); },
+        }, [svgIcon('dock')]),
+        el('button', {
+          class: 'ai-icon-btn',
+          title: 'AI 도구 전체 페이지로 보기',
+          'aria-label': '전체 페이지로 열기',
+          onclick: function () { navigate('ai'); },
+        }, [svgIcon('expand')]),
+        el('button', {
+          class: 'ai-icon-btn',
+          title: '채팅창 접기',
+          'aria-label': '채팅창 접기',
+          onclick: function () { AiStore.setWidgetOpen(false); renderAiWidget(); updateTopbarAiBtn(); },
+        }, [svgIcon('minimize')]),
+      ]),
+    ]);
+    panel.append(head);
+
+    // 2) 제공자 & 세부 모델 바
+    const provRow = el('div', { class: 'ai-prov-row', role: 'tablist' });
+    Object.keys(AI_PROVIDERS).forEach(function (pid) {
+      const item = AI_PROVIDERS[pid];
+      const active = pid === provider;
+      provRow.append(el('button', {
+        class: 'ai-prov-pill',
+        role: 'tab',
+        'aria-selected': active ? 'true' : 'false',
+        onclick: function () { _widgetShowKey = false; AiStore.setProvider(pid); renderAiWidget({ focusInput: AiStore.hasKey(pid) }); },
+      }, item.name + (AiStore.hasKey(pid) ? '' : ' 🔑')));
+    });
+    const bar = el('div', { class: 'ai-mini-bar' }, [provRow]);
+    if (provider === 'gemini') {
+      bar.append(buildGeminiModelControls(true));
+    } else {
+      bar.append(el('div', { class: 'hint', style: 'font-size:.73rem;margin:0' }, '모델: ' + p.modelLabel()));
+    }
+    panel.append(bar);
+
+    // 3) 본문 (키 입력 폼 또는 메시지 목록)
+    const body = el('div', { class: 'ai-mini-body' });
+    if (showKey) {
+      const keyInput = el('input', { type: 'password', placeholder: p.name + ' API 키 붙여넣기', value: AiStore.getKey(provider), autocomplete: 'off', spellcheck: 'false', style: 'min-height:38px;font-size:.88rem' });
+      const saveKey = function () {
+        const v = keyInput.value.trim();
+        if (!v) { toast('API 키를 입력하세요.', 'warn'); keyInput.focus(); return; }
+        AiStore.setKey(provider, v);
+        _widgetShowKey = false;
+        renderAiWidget({ focusInput: true });
+        toast(p.name + ' 키를 저장했습니다.');
+      };
+      keyInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); saveKey(); } });
+
+      body.append(
+        el('div', { style: 'font-weight:700;font-size:.9rem' }, p.name + ' API 키 설정'),
+        el('p', { class: 'hint', style: 'font-size:.78rem;line-height:1.5;margin:0' }, p.keyHint),
+        keyInput,
+        el('div', { class: 'row', style: 'gap:6px' }, [
+          el('button', { class: 'btn btn-primary btn-sm', style: 'flex:1', onclick: saveKey }, '키 저장'),
+          hasKey ? el('button', { class: 'btn btn-sm', onclick: function () { _widgetShowKey = false; renderAiWidget({ focusInput: true }); } }, '취소') : null,
+          hasKey ? el('button', { class: 'btn btn-sm btn-danger', onclick: function () { AiStore.setKey(provider, ''); _widgetShowKey = false; renderAiWidget(); toast(p.name + ' 키를 삭제했습니다.'); } }, '삭제') : null,
+        ]),
+        el('p', { class: 'hint', style: 'font-size:.76rem;margin:2px 0 0' }, ['발급 페이지: ', el('a', { href: p.keyUrl, target: '_blank', rel: 'noopener noreferrer' }, '열기 ↗')]),
+      );
+      panel.append(body);
+      root.append(panel);
+      if (opts.focusInput) setTimeout(function () { keyInput.focus(); }, 0);
+      return;
+    }
+
+    const history = AiStore.chat(provider);
+    if (history.length === 0) {
+      body.append(el('div', { style: 'margin:auto;text-align:center;padding:16px 8px;color:var(--text-sub)' }, [
+        el('div', { style: 'font-weight:700;color:var(--text);margin-bottom:4px;font-size:.92rem' }, p.name + '에게 바로 질문하세요'),
+        el('p', { class: 'hint', style: 'font-size:.8rem;margin:0' }, '노트·답안·계획 화면을 닫지 않고 현재 공부 중인 쟁점을 바로 물어볼 수 있습니다.'),
+      ]));
+    } else {
+      history.forEach(function (m) { body.append(renderAiMessage(m, true)); });
+    }
+    panel.append(body);
+
+    // 4) 하단 입력창
+    const ta = el('textarea', { placeholder: p.name + '에게 질문 (Enter 전송)', rows: '1', 'aria-label': p.name + ' 질문 입력' });
+    const sendBtn = el('button', { class: 'btn btn-primary btn-sm' }, _aiSending ? '…' : '전송');
+    if (_aiSending) { ta.disabled = true; sendBtn.disabled = true; }
+
+    function doSend() {
+      const text = ta.value.trim();
+      if (!text || _aiSending) return;
+      ta.value = '';
+      sendMessage(provider, text, ctx);
+    }
+    sendBtn.onclick = doSend;
+    ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); doSend(); } });
+
+    panel.append(el('div', { class: 'ai-mini-foot' }, [ta, sendBtn]));
+    root.append(panel);
+
+    setTimeout(function () {
+      body.scrollTop = body.scrollHeight;
+      if (opts.focusInput && !_aiSending) ta.focus();
+    }, 0);
+  }
+
+  function updateTopbarAiBtn() {
+    const btn = document.getElementById('topbar-ai-btn');
+    if (!btn) return;
+    const active = current === 'ai' || AiStore.widgetOpen();
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.style.borderColor = active ? 'var(--accent)' : '';
+    btn.style.color = active ? 'var(--accent)' : '';
   }
 
   async function sendMessage(provider, text, ctx) {
@@ -2268,18 +2607,26 @@
     AiStore.pushMessage(provider, { role: 'user', content: text });
     AiStore.pushMessage(provider, { role: 'assistant', content: '', pending: true });
     _aiSending = true;
-    ctx.refresh();
+    refreshAiSurfaces();
 
     try {
       // 요청 history에서 pending·과거 오류 메시지는 제외 (대화 흐름 오염 방지)
       let history = AiStore.chat(provider).filter(function (m) { return !m.pending && !m.error; });
       // 일부 API는 user로 시작하고 user/assistant가 번갈아야 하므로, 맨 앞의 비-user 메시지 제거
       while (history.length && history[0].role !== 'user') history = history.slice(1);
-      const answer = await p.send(key, history);
-      AiStore.replaceLast(provider, { role: 'assistant', content: answer });
+      const result = await p.send(key, history);
+      const replyText = typeof result === 'string' ? result : result.text;
+      const msgObj = { role: 'assistant', content: replyText };
+      if (result && result.apiParts) {
+        msgObj.apiParts = result.apiParts;
+        msgObj.geminiModel = result.geminiModel;
+      }
+      AiStore.replaceLast(provider, msgObj);
     } catch (e) {
       let hint = (e && e.message) ? e.message : String(e);
-      if (/Failed to fetch|NetworkError|CORS/i.test(hint)) {
+      if (/Gemini 4 Argon/.test(hint)) {
+        // Argon 전용 상세 안내 메시지는 그대로 유지
+      } else if (/Failed to fetch|NetworkError|CORS/i.test(hint)) {
         hint = '네트워크/CORS 오류로 브라우저에서 직접 호출이 막혔습니다. 키가 맞는지, 네트워크 상태를 확인하세요. (OpenAI는 환경에 따라 브라우저 직접 호출이 제한될 수 있습니다.)';
       } else if (/not found|not supported|unsupported model|is not found/i.test(hint)) {
         hint = '이 키에서 지원하지 않는 모델입니다. 모델 이름이 바뀌었을 수 있어요. (' + hint + ')';
@@ -2291,7 +2638,7 @@
       AiStore.replaceLast(provider, { role: 'assistant', content: '오류: ' + hint, error: true });
     } finally {
       _aiSending = false;
-      ctx.refresh();
+      refreshAiSurfaces({ focusWidget: current !== 'ai' && AiStore.widgetOpen() });
     }
   }
 
@@ -2324,7 +2671,7 @@
     _navigating = true;
     if (('#' + route) !== window.location.hash) window.location.hash = route;
     _navigating = false;
-    refresh(); updateNavHighlight();
+    refresh(); updateNavHighlight(); renderAiWidget(); updateTopbarAiBtn();
     if (!opts.noFocus) { const c = document.getElementById('content'); if (c) c.focus(); }
   }
   // 뒤로/앞으로(해시 변경) 시 URL·제목·화면을 항상 일치시킴 (보고서 3쪽 P0)
@@ -2332,7 +2679,7 @@
     if (_navigating) return;
     const h = window.location.hash.slice(1);
     const route = ROUTES[h] ? h : 'home';
-    if (route !== current) { current = route; refresh(); updateNavHighlight(); }
+    if (route !== current) { current = route; refresh(); updateNavHighlight(); renderAiWidget(); updateTopbarAiBtn(); }
   }
   function refresh() {
     const content = document.getElementById('content');
@@ -2391,7 +2738,7 @@
   }
 
   function buildShell() {
-    const app = el('div', { class: 'app' });
+    const app = el('div', { class: 'app', id: 'app-shell' });
     const sidebar = el('aside', { class: 'sidebar', id: 'sidebar', 'aria-label': '주 메뉴' });
     sidebar.append(el('div', { class: 'brand' }, ['나의 수험 공간', el('small', {}, '변리사 2차 · 2027')]));
     const nav = el('nav', { class: 'nav' });
@@ -2422,18 +2769,33 @@
     const searchInput = el('input', { type: 'search', placeholder: '검색', 'aria-label': '전체 검색' });
     searchInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') openSearch(searchInput.value); });
     searchInput.addEventListener('focus', function () { openSearch(searchInput.value); });
+    const topbarAiBtn = el('button', {
+      class: 'btn btn-sm',
+      id: 'topbar-ai-btn',
+      title: '우측 AI 채팅창 열기/닫기',
+      'aria-label': '우측 AI 채팅창 열기/닫기',
+      onclick: function () {
+        if (current === 'ai') { toast('현재 AI 도구 전체 화면입니다. 다른 메뉴로 이동하면 우측 미니 채팅창이 열립니다.'); return; }
+        const next = !AiStore.widgetOpen();
+        AiStore.setWidgetOpen(next);
+        renderAiWidget({ focusInput: next });
+        updateTopbarAiBtn();
+      },
+    }, [svgIcon('ai')]);
     const topbar = el('header', { class: 'topbar' }, [
       el('div', { class: 'topbar-inner' }, [
         el('button', { class: 'btn btn-sm menu-toggle', 'aria-label': '메뉴 열기', onclick: function () { sidebar.classList.toggle('open'); scrim.classList.toggle('show'); } }, '☰'),
         el('h1', { id: 'page-title' }, '오늘의 수험'),
         el('div', { class: 'search-box' }, [svgIcon('search'), searchInput]),
         el('button', { class: 'btn btn-sm', onclick: openInbox, title: '빠른 수집', 'aria-label': '빠른 수집' }, [svgIcon('inbox')]),
+        topbarAiBtn,
       ]),
     ]);
     const focusBanner = el('div', { class: 'focus-banner', id: 'focus-banner' });
     const content = el('main', { class: 'content', id: 'content', tabindex: '-1' });
     main.append(topbar, focusBanner, content);
-    app.append(sidebar, scrim, main);
+    const aiWidgetRoot = el('aside', { class: 'ai-widget-root', id: 'ai-widget-root', 'aria-label': '우측 AI 채팅' });
+    app.append(sidebar, scrim, main, aiWidgetRoot);
     document.body.append(el('a', { class: 'skip-link', href: '#content' }, '본문으로 건너뛰기'), app);
   }
 
