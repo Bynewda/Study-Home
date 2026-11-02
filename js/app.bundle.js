@@ -365,21 +365,60 @@
       },
     },
     gemini: {
-      name: 'Gemini', vendor: 'Google', badge: 'G', model: 'gemini-1.5-flash',
+      name: 'Gemini', vendor: 'Google', badge: 'G', model: 'gemini-flash-latest',
       keyHint: 'Google AI Studio API 키. aistudio.google.com → Get API key 에서 발급',
       keyUrl: 'https://aistudio.google.com/app/apikey',
-      async send(key, history) {
-        const contents = history.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; });
-        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + this.model + ':generateContent', {
+      // 구글이 모델 버전을 자주 바꿔 특정 이름이 사라질 수 있어, 우선순위대로 시도하고
+      // 그래도 안 되면 이 키에서 쓸 수 있는 모델을 조회(ListModels)해 자동 선택한다.
+      _resolved: null,
+      _candidates: ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-2.5-flash-lite', 'gemini-1.5-flash'],
+      async _call(key, modelName, contents) {
+        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + modelName + ':generateContent', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: JSON.stringify({ contents: contents }),
         });
         const data = await res.json();
+        return { ok: res.ok, status: res.status, data: data };
+      },
+      async _discover(key) {
+        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models', { headers: { 'x-goog-api-key': key } });
+        const data = await res.json();
         if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+        const usable = (data.models || []).filter(function (m) { return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0; });
+        // flash 계열을 먼저, 그다음 아무거나
+        const pick = usable.find(function (m) { return /flash/.test(m.name) && !/thinking|image|tts|live/.test(m.name); }) || usable[0];
+        if (!pick) throw new Error('이 키로 쓸 수 있는 generateContent 모델이 없습니다.');
+        return pick.name.replace(/^models\//, '');
+      },
+      _extract(data) {
         const cand = data.candidates && data.candidates[0];
         if (!cand || !cand.content || !cand.content.parts) throw new Error('응답이 비었습니다 (안전 필터 등으로 차단되었을 수 있어요).');
         return cand.content.parts.map(function (p) { return p.text || ''; }).join('');
+      },
+      async send(key, history) {
+        const contents = history.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; });
+        // 이미 이 세션에서 쓸 모델을 찾았으면 그걸로
+        if (this._resolved) {
+          const r = await this._call(key, this._resolved, contents);
+          if (r.ok) return this._extract(r.data);
+          // 해결했던 모델이 또 막히면 캐시 초기화 후 아래 로직으로
+          this._resolved = null;
+        }
+        let lastErr = null;
+        for (const name of this._candidates) {
+          const r = await this._call(key, name, contents);
+          if (r.ok) { this._resolved = name; return this._extract(r.data); }
+          lastErr = (r.data && r.data.error && r.data.error.message) || ('HTTP ' + r.status);
+          // "모델 없음/미지원"이면 다음 후보로, 그 외(키·한도 오류)는 즉시 중단
+          if (!/not found|not supported|is not found|unsupported/i.test(lastErr)) throw new Error(lastErr);
+        }
+        // 후보가 전부 실패 → 키에서 쓸 수 있는 모델을 직접 조회해 한 번 더 시도
+        const discovered = await this._discover(key);
+        this._resolved = discovered;
+        const r2 = await this._call(key, discovered, contents);
+        if (r2.ok) return this._extract(r2.data);
+        throw new Error((r2.data && r2.data.error && r2.data.error.message) || lastErr || ('HTTP ' + r2.status));
       },
     },
     claude: {
@@ -2227,9 +2266,11 @@
       let hint = (e && e.message) ? e.message : String(e);
       if (/Failed to fetch|NetworkError|CORS/i.test(hint)) {
         hint = '네트워크/CORS 오류로 브라우저에서 직접 호출이 막혔습니다. 키가 맞는지, 네트워크 상태를 확인하세요. (OpenAI는 환경에 따라 브라우저 직접 호출이 제한될 수 있습니다.)';
-      } else if (/401|invalid|api key|unauthor/i.test(hint)) {
+      } else if (/not found|not supported|unsupported model|is not found/i.test(hint)) {
+        hint = '이 키에서 지원하지 않는 모델입니다. 모델 이름이 바뀌었을 수 있어요. (' + hint + ')';
+      } else if (/401|403|API key not valid|invalid.*key|unauthor|permission/i.test(hint)) {
         hint = 'API 키가 올바르지 않거나 권한이 없습니다. 키를 다시 확인하세요. (' + hint + ')';
-      } else if (/429|quota|rate/i.test(hint)) {
+      } else if (/429|quota|rate limit|resource.*exhausted/i.test(hint)) {
         hint = '요청 한도/크레딧을 초과했습니다. 잠시 후 다시 시도하거나 결제·사용량을 확인하세요. (' + hint + ')';
       }
       AiStore.replaceLast(provider, { role: 'assistant', content: '오류: ' + hint, error: true });
