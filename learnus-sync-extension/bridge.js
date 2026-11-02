@@ -1,10 +1,58 @@
 (function () {
   if (!document || !document.documentElement) return;
   document.documentElement.setAttribute('data-study-home-lu-ext', '1');
+
+  var autoTriggered = false;
+  function runInitialAutoSync() {
+    if (autoTriggered) return;
+    autoTriggered = true;
+    try {
+      chrome.storage.local.get(['latestLearnUsPayload'], function (items) {
+        if (chrome.runtime.lastError) return;
+        if (items && items.latestLearnUsPayload) {
+          window.postMessage({
+            type: 'STUDY_HOME_EXT_SYNC_RESULT',
+            ok: true,
+            silent: true,
+            payload: items.latestLearnUsPayload
+          }, window.location.origin);
+        }
+      });
+      chrome.runtime.sendMessage({ type: 'RUN_LEARNUS_SYNC_AUTO_IF_STALE' }, function (resp) {
+        if (chrome.runtime.lastError) return;
+        if (resp && resp.ok && resp.payload) {
+          window.postMessage({
+            type: 'STUDY_HOME_EXT_SYNC_RESULT',
+            ok: true,
+            silent: true,
+            payload: resp.payload
+          }, window.location.origin);
+        }
+      });
+    } catch (e) {}
+  }
+
   window.postMessage({ type: 'STUDY_HOME_EXT_READY' }, window.location.origin);
+  setTimeout(runInitialAutoSync, 400);
+
+  chrome.runtime.onMessage.addListener(function (msg) {
+    if (msg && msg.type === 'PUSH_LEARNUS_PAYLOAD' && msg.payload) {
+      window.postMessage({
+        type: 'STUDY_HOME_EXT_SYNC_RESULT',
+        ok: true,
+        silent: true,
+        payload: msg.payload
+      }, window.location.origin);
+    }
+  });
 
   window.addEventListener('message', function (e) {
-    if (e.source !== window || !e.data || e.data.type !== 'STUDY_HOME_EXT_REQUEST_SYNC') return;
+    if (e.source !== window || !e.data) return;
+    if (e.data.type === 'STUDY_HOME_PAGE_READY') {
+      runInitialAutoSync();
+      return;
+    }
+    if (e.data.type !== 'STUDY_HOME_EXT_REQUEST_SYNC') return;
     try {
       chrome.runtime.sendMessage({ type: 'RUN_LEARNUS_SYNC' }, function (resp) {
         var lastErr = chrome.runtime.lastError;
@@ -20,6 +68,7 @@
           window.postMessage({
             type: 'STUDY_HOME_EXT_SYNC_RESULT',
             ok: true,
+            silent: false,
             payload: resp.payload
           }, window.location.origin);
         } else {

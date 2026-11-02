@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "나의 수험 공간 · LearnUs 1클릭 동기화",
-  "version": "1.0.0",
-  "description": "비밀번호 입력 없이 로그인된 연세 LearnUs에서 수강 과목·과제 마감·중요 공지를 나의 수험 공간으로 1클릭 동기화합니다.",
+  "name": "나의 수험 공간 · LearnUs 자동 동기화",
+  "version": "1.1.0",
+  "description": "비밀번호 입력 없이 LearnUs 접속 시 및 수험 공간 열람 시 수강 과목·과제 마감·중요 공지를 백그라운드에서 자동 동기화합니다.",
   "permissions": [
     "tabs",
-    "scripting"
+    "scripting",
+    "storage"
   ],
   "host_permissions": [
     "https://*.learnus.org/*",

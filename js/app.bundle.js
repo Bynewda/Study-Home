@@ -3173,21 +3173,31 @@
       if (!e || !e.data) return;
       const msg = e.data;
 
-      /* 1) 전용 웨일/크롬 확장 앱 결과 수신 */
+      /* 1) 전용 웨일/크롬 확장 앱 결과 수신 (수동 및 백그라운드 자동 반영 모두 지원) */
       if (e.source === window && e.origin === window.location.origin && msg.type === 'STUDY_HOME_EXT_SYNC_RESULT') {
-        _extSyncInFlight = false;
+        if (!msg.silent) _extSyncInFlight = false;
         if (!msg.ok || !msg.payload) {
-          toast(msg.error || 'LearnUs 동기화에 실패했습니다.', 'warn', 6000);
+          if (!msg.silent) toast(msg.error || 'LearnUs 동기화에 실패했습니다.', 'warn', 6000);
+          return;
+        }
+        if (msg.silent && msg.payload.syncedAt && Store.data().settings.lastLearnUsSyncAt === msg.payload.syncedAt) {
           return;
         }
         try {
           const res = applyLearnUsSyncPayload(msg.payload);
-          if (_activeLearnUsModal) { _activeLearnUsModal.close(); _activeLearnUsModal = null; }
-          acadTab = (res.addedAsg > 0) ? 'assignments' : (res.addedNtc > 0 ? 'notices' : acadTab);
-          navigate('academic');
-          toast('✅ LearnUs 동기화 완료! 과제 신규 ' + res.addedAsg + '건(갱신 ' + res.updatedAsg + '건) · 공지 ' + res.addedNtc + '건 반영', 'ok', 5000);
+          if (msg.silent) {
+            refresh();
+            if (res.addedAsg > 0 || res.addedNtc > 0) {
+              toast('🔔 LearnUs 새 소식 자동 반영: 과제 ' + res.addedAsg + '건 · 공지 ' + res.addedNtc + '건', 'ok', 4500);
+            }
+          } else {
+            if (_activeLearnUsModal) { _activeLearnUsModal.close(); _activeLearnUsModal = null; }
+            acadTab = (res.addedAsg > 0) ? 'assignments' : (res.addedNtc > 0 ? 'notices' : acadTab);
+            navigate('academic');
+            toast('✅ LearnUs 동기화 완료! 과제 신규 ' + res.addedAsg + '건(갱신 ' + res.updatedAsg + '건) · 공지 ' + res.addedNtc + '건 반영', 'ok', 5000);
+          }
         } catch (err) {
-          toast('동기화 반영 오류: ' + err.message, 'warn');
+          if (!msg.silent) toast('동기화 반영 오류: ' + err.message, 'warn');
         }
         return;
       }
@@ -3209,6 +3219,10 @@
         toast('LearnUs 동기화 처리 중 오류: ' + err.message, 'warn');
       }
     });
+
+    try {
+      window.postMessage({ type: 'STUDY_HOME_PAGE_READY' }, window.location.origin);
+    } catch (e) {}
   }
   function renderAttendance(root, ctx) {
     const d = Store.data();

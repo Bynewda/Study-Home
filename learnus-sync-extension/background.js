@@ -1,3 +1,6 @@
+var lastVisitAutoSyncAt = 0;
+var syncInProgress = false;
+
 function waitForTabComplete(tabId, timeoutMs) {
   return new Promise(function (resolve) {
     var done = false;
@@ -21,6 +24,34 @@ function waitForTabComplete(tabId, timeoutMs) {
       if (t && t.status === 'complete') finish(t);
     });
   });
+}
+
+async function saveAndBroadcastPayload(payload) {
+  if (!payload) return;
+  try {
+    await chrome.storage.local.set({
+      latestLearnUsPayload: payload,
+      latestLearnUsAt: Date.now()
+    });
+  } catch (e) {}
+
+  try {
+    var homeTabs = await chrome.tabs.query({
+      url: [
+        'https://study-space-2027.netlify.app/*',
+        'http://localhost/*',
+        'http://127.0.0.1/*'
+      ]
+    });
+    for (var i = 0; i < homeTabs.length; i++) {
+      if (homeTabs[i] && homeTabs[i].id) {
+        chrome.tabs.sendMessage(homeTabs[i].id, {
+          type: 'PUSH_LEARNUS_PAYLOAD',
+          payload: payload
+        }, function () { void chrome.runtime.lastError; });
+      }
+    }
+  } catch (e) {}
 }
 
 async function collectFromLearnUsTab() {
@@ -318,65 +349,116 @@ async function collectFromLearnUsTab() {
   }
 }
 
-async function handleSync() {
-  var tabs = await chrome.tabs.query({ url: 'https://ys.learnus.org/*' });
-  var tab = tabs && tabs.length ? tabs[0] : null;
-  var createdTempTab = false;
-
-  if (!tab) {
-    tab = await chrome.tabs.create({ url: 'https://ys.learnus.org/', active: false });
-    createdTempTab = true;
-    tab = await waitForTabComplete(tab.id, 15000);
-  } else if (tab.status !== 'complete') {
-    tab = await waitForTabComplete(tab.id, 10000);
-  }
-
-  if (!tab || !tab.id) {
-    return { ok: false, error: 'LearnUs 탭을 열 수 없습니다.' };
-  }
-
-  var latestTab = await chrome.tabs.get(tab.id);
-  var currentUrl = (latestTab && latestTab.url) || '';
-  if (!currentUrl || currentUrl.indexOf('learnus.org') < 0 || /\/login\/|infra\.yonsei\.ac\.kr/i.test(currentUrl)) {
-    await chrome.tabs.update(tab.id, { active: true });
-    return { ok: false, error: 'LearnUs 로그인이 필요합니다. 열린 LearnUs 탭에서 로그인하신 뒤 다시 동기화 버튼을 눌러 주세요.' };
-  }
-
+async function runOnTab(tabId) {
   var execRes;
   try {
     execRes = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId: tabId },
       world: 'MAIN',
       func: collectFromLearnUsTab
     });
   } catch (e) {
     execRes = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId: tabId },
       func: collectFromLearnUsTab
     });
   }
-
-  var res = execRes && execRes[0] && execRes[0].result;
-  if (res && res.notLoggedIn) {
-    await chrome.tabs.update(tab.id, { active: true });
-    return { ok: false, error: 'LearnUs에 로그인되어 있지 않습니다. 열린 LearnUs 탭에서 로그인하신 뒤 다시 눌러 주세요.' };
-  }
-
-  if (createdTempTab) {
-    try { await chrome.tabs.remove(tab.id); } catch (e) {}
-  }
-
-  if (res && res.ok && res.payload) {
-    return { ok: true, payload: res.payload };
-  }
-  return { ok: false, error: (res && res.error) || 'LearnUs 데이터를 가져오지 못했습니다.' };
+  return execRes && execRes[0] && execRes[0].result;
 }
+
+async function handleSync(silent) {
+  if (syncInProgress) {
+    return { ok: false, error: '동기화가 이미 진행 중입니다.' };
+  }
+  syncInProgress = true;
+  try {
+    var tabs = await chrome.tabs.query({ url: 'https://ys.learnus.org/*' });
+    var tab = tabs && tabs.length ? tabs[0] : null;
+    var createdTempTab = false;
+
+    if (!tab) {
+      tab = await chrome.tabs.create({ url: 'https://ys.learnus.org/', active: false });
+      createdTempTab = true;
+      tab = await waitForTabComplete(tab.id, 15000);
+    } else if (tab.status !== 'complete') {
+      tab = await waitForTabComplete(tab.id, 10000);
+    }
+
+    if (!tab || !tab.id) {
+      return { ok: false, error: 'LearnUs 탭을 열 수 없습니다.' };
+    }
+
+    var latestTab = await chrome.tabs.get(tab.id);
+    var currentUrl = (latestTab && latestTab.url) || '';
+    if (!currentUrl || currentUrl.indexOf('learnus.org') < 0 || /\/login\/|infra\.yonsei\.ac\.kr/i.test(currentUrl)) {
+      if (silent) {
+        if (createdTempTab) { try { await chrome.tabs.remove(tab.id); } catch (e) {} }
+        return { ok: false, silent: true, error: '미로그인 상태' };
+      }
+      await chrome.tabs.update(tab.id, { active: true });
+      return { ok: false, error: 'LearnUs 로그인이 필요합니다. 열린 LearnUs 탭에서 로그인하신 뒤 다시 동기화 버튼을 눌러 주세요.' };
+    }
+
+    var res = await runOnTab(tab.id);
+    if (res && res.notLoggedIn) {
+      if (silent) {
+        if (createdTempTab) { try { await chrome.tabs.remove(tab.id); } catch (e) {} }
+        return { ok: false, silent: true, error: '미로그인 상태' };
+      }
+      await chrome.tabs.update(tab.id, { active: true });
+      return { ok: false, error: 'LearnUs에 로그인되어 있지 않습니다. 열린 LearnUs 탭에서 로그인하신 뒤 다시 눌러 주세요.' };
+    }
+
+    if (createdTempTab) {
+      try { await chrome.tabs.remove(tab.id); } catch (e) {}
+    }
+
+    if (res && res.ok && res.payload) {
+      await saveAndBroadcastPayload(res.payload);
+      return { ok: true, payload: res.payload };
+    }
+    return { ok: false, error: (res && res.error) || 'LearnUs 데이터를 가져오지 못했습니다.' };
+  } finally {
+    syncInProgress = false;
+  }
+}
+
+/* LearnUs에 접속할 때마다 자동으로 백그라운드 수집 (5분 쿨타임) */
+chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
+  if (changeInfo.status !== 'complete' || !tab || !tab.url) return;
+  if (tab.url.indexOf('https://ys.learnus.org/') !== 0) return;
+  if (/\/login\/|logout\.php/i.test(tab.url)) return;
+  if (syncInProgress || (Date.now() - lastVisitAutoSyncAt < 5 * 60 * 1000)) return;
+  lastVisitAutoSyncAt = Date.now();
+  setTimeout(function () {
+    runOnTab(tabId)
+      .then(function (res) {
+        if (res && res.ok && res.payload) {
+          saveAndBroadcastPayload(res.payload);
+        }
+      })
+      .catch(function () {});
+  }, 1200);
+});
 
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg && msg.type === 'RUN_LEARNUS_SYNC') {
-    handleSync()
+    handleSync(false)
       .then(function (r) { sendResponse(r); })
       .catch(function (err) { sendResponse({ ok: false, error: err && err.message ? err.message : String(err) }); });
+    return true;
+  }
+  if (msg && msg.type === 'RUN_LEARNUS_SYNC_AUTO_IF_STALE') {
+    chrome.storage.local.get(['latestLearnUsAt'], function (items) {
+      var lastAt = (items && items.latestLearnUsAt) || 0;
+      if (Date.now() - lastAt < 15 * 60 * 1000) {
+        sendResponse({ ok: false, skipped: true });
+        return;
+      }
+      handleSync(true)
+        .then(function (r) { sendResponse(r); })
+        .catch(function () { sendResponse({ ok: false, silent: true }); });
+    });
     return true;
   }
 });
