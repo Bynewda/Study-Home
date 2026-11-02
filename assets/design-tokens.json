@@ -1,0 +1,55 @@
+{
+  "brand": {
+    "nameKo": "논결",
+    "nameEn": "NONGYEOL",
+    "tagline": "생각이 답안이 되는 공간.",
+    "description": "변리사 2차를 위한 개인 학습 서재"
+  },
+  "color": {
+    "light": {
+      "bg": "#F5F3EC",
+      "surface": "#FCFBF7",
+      "text": "#263C32",
+      "textSub": "#5C6E64",
+      "accent": "#244C3D",
+      "accentStrong": "#1B3B2F",
+      "onAccent": "#F5F3EC",
+      "examBg": "#E6ECDF",
+      "examFg": "#244C3D",
+      "acadBg": "#EFE4D3",
+      "acadFg": "#98583F",
+      "terracotta": "#98583F",
+      "border": "#E3E0D6",
+      "borderStrong": "#CFCBC0"
+    },
+    "dark": {
+      "bg": "#142A23",
+      "surface": "#1B352C",
+      "text": "#F5F2E5",
+      "textSub": "#B2C2B8",
+      "accent": "#C5D8B6",
+      "accentStrong": "#D5E5C8",
+      "onAccent": "#142A23",
+      "examBg": "#234237",
+      "examFg": "#D6E6CA",
+      "acadBg": "#342C22",
+      "acadFg": "#E7C5A8",
+      "border": "#29473C",
+      "borderStrong": "#385B4E"
+    }
+  },
+  "typography": {
+    "serif": "'Noto Serif KR', 'KoPubWorldBatang', 'AppleMyungjo', 'Batang', Georgia, serif",
+    "sans": "Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif",
+    "bodySizePx": 16,
+    "noteSizePx": 18,
+    "noteLineHeight": 1.8
+  },
+  "spacingPx": [4, 8, 12, 16, 24, 32, 48],
+  "defaults": {
+    "aiPanelCollapsed": true,
+    "ambientSoundMuted": true,
+    "minTapTargetPx": 44,
+    "transitionMs": 150
+  }
+}

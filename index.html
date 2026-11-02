@@ -4,17 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="description" content="변리사 2차 시험 준비 중심 개인 학습 공간 — 오늘의 수험, 주간 계획, 실전 답안과 GS, 단권화 노트, 복습, 대학 학업 관리">
-  <meta name="theme-color" content="#234B3F">
-  <title>나의 수험 공간 · 변리사 2차 2027</title>
+  <meta name="description" content="논결 NONGYEOL — 변리사 2차를 위한 개인 학습 서재 · 오늘의 공부, 주간 계획, 답안 연습, 단권화 서재, 복습 카드, 대학 학업 관리">
+  <meta name="theme-color" content="#244C3D">
+  <title>논결 NONGYEOL · 변리사 2차 학습 서재</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Noto+Serif+KR:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23234B3F'/><text x='50' y='68' font-size='56' text-anchor='middle' fill='white' font-family='sans-serif'>変</text></svg>">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none'%3E%3Crect width='64' height='64' rx='14' fill='%23244C3D'/%3E%3Cpath d='M18 46V27.5C18 23.9 20.9 21 24.5 21C28.1 21 31 23.9 31 27.5V46' stroke='%23F5F3EC' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M31 46V25C31 20.6 34.6 17 39 17C42.9 17 46 20.1 46 24V46' stroke='%23F5F3EC' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='46' cy='15.5' r='3.4' fill='%23E6ECDF'/%3E%3C/svg%3E">
 </head>
 <body>
   <noscript>
-    <div style="padding:24px;max-width:640px;margin:40px auto;background:#fff;border:1px solid #ccc;border-radius:12px">
+    <div style="padding:24px;max-width:640px;margin:40px auto;background:#FCFBF7;border:1px solid #E3E0D6;border-radius:12px">
       <h1>자바스크립트가 필요합니다</h1>
-      <p>이 학습 공간은 브라우저에서 동작하는 앱입니다. 자바스크립트를 켜 주세요.</p>
+      <p>논결 서재는 브라우저에서 동작하는 개인 학습 공간입니다. 자바스크립트를 켜 주세요.</p>
     </div>
   </noscript>
 
@@ -24,7 +27,7 @@
   <!-- Firebase 설정값 (구글 로그인 + 기기 간 실시간 동기화) -->
   <!-- 설정값이 null 이면 클라우드 기능은 자동으로 꺼지고, 앱은 평소처럼 로컬 저장으로 동작합니다. -->
   <script src="js/firebase-config.js"></script>
-  <!-- GitHub Pages(https) 에서만 Firebase 모듈 로드. file:// 로컬에서는 CORS로 막히므로 건너뜀 -->
+  <!-- 웹서버(http/https) 환경에서만 Firebase 모듈 로드. file:// 로컬에서는 CORS로 막히므로 건너뜀 -->
   <script>
     if (location.protocol === 'http:' || location.protocol === 'https:') {
       var s = document.createElement('script');
