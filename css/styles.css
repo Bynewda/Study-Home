@@ -381,22 +381,39 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.7; }
 /* 주간 시간표 */
 .timetable {
   display: grid;
-  grid-template-columns: 56px repeat(7, 1fr);
+  grid-template-columns: 56px repeat(7, minmax(0, 1fr));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
   background: var(--surface);
 }
 .tt-head { background: var(--bg); font-weight: 700; font-size: .85rem; padding: var(--s2); text-align: center; border-bottom: 1px solid var(--border); border-left: 1px solid var(--border); }
-.tt-timecol { font-size: .72rem; color: var(--text-sub); text-align: right; padding: 2px var(--s2); border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-.tt-cell { border-left: 1px solid var(--border); border-bottom: 1px solid var(--border); min-height: 40px; position: relative; padding: 1px; }
+.tt-times { display: flex; flex-direction: column; }
+.tt-timecol { font-size: .72rem; color: var(--text-sub); text-align: right; padding: 2px var(--s2); border-bottom: 1px solid var(--border); }
+.tt-timecol:last-child { border-bottom: none; }
+.tt-daycol { position: relative; border-left: 1px solid var(--border); min-width: 0; }
+.tt-cell { border-bottom: 1px solid var(--border); min-height: 40px; position: relative; cursor: pointer; transition: background .1s; }
+.tt-cell:hover { background: var(--bg); }
+.tt-cell.tt-cell-last { border-bottom: none; }
 .tt-block {
-  font-size: .72rem; font-weight: 600; padding: 2px 4px; border-radius: 5px;
-  overflow: hidden; height: 100%;
+  position: absolute; z-index: 2;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 1px;
+  font-family: inherit; font-size: .74rem; font-weight: 600; line-height: 1.25;
+  text-align: left; padding: 3px 5px; border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  border-color: color-mix(in srgb, currentColor 25%, transparent);
+  overflow: hidden; cursor: pointer;
+  transition: filter .12s, box-shadow .12s;
 }
+.tt-block:hover { filter: brightness(0.97); box-shadow: 0 1px 4px rgba(0,0,0,.1); z-index: 3; }
+.tt-block:focus-visible { z-index: 4; }
+.tt-block.compact { padding: 1px 4px; justify-content: center; }
+.tt-block-title { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-block.tall .tt-block-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; word-break: break-word; }
+.tt-block-time { font-size: .66rem; font-weight: 500; opacity: .82; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tt-block.exam { background: var(--exam-bg); color: var(--exam-fg); }
 .tt-block.acad { background: var(--acad-bg); color: var(--acad-fg); }
-.tt-block.other { background: var(--bg); color: var(--text-sub); border: 1px solid var(--border); }
+.tt-block.other { background: var(--bg); color: var(--text-sub); border-color: var(--border-strong); }
 
 /* 진행 바 */
 .progress { height: 8px; background: var(--bg); border-radius: 999px; overflow: hidden; border: 1px solid var(--border); }

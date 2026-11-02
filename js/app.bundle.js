@@ -317,6 +317,94 @@
   })();
 
   /* =======================================================================
+     3-b. AiStore — AI 키·대화 기록 전용 저장소 (기기 로컬 전용)
+     ⚠️ API 키와 대화는 메인 Store(클라우드 동기화 대상)와 분리해 별도 로컬 키에 저장합니다.
+        → Firebase 동기화를 켜도 키/대화는 절대 클라우드로 올라가지 않습니다.
+     ======================================================================= */
+  const AI_STORAGE_KEY = 'patent-study-home:ai:v1';
+  const AiStore = (function () {
+    let _d = null;
+    function def() { return { keys: { gpt: '', gemini: '', claude: '' }, provider: 'gpt', chats: { gpt: [], gemini: [], claude: [] } }; }
+    function load() {
+      try { const raw = localStorage.getItem(AI_STORAGE_KEY); _d = raw ? Object.assign(def(), JSON.parse(raw)) : def(); }
+      catch (e) { _d = def(); }
+      _d.keys = Object.assign({ gpt: '', gemini: '', claude: '' }, _d.keys || {});
+      _d.chats = Object.assign({ gpt: [], gemini: [], claude: [] }, _d.chats || {});
+    }
+    function persist() { try { localStorage.setItem(AI_STORAGE_KEY, JSON.stringify(_d)); } catch (e) { console.error('AI 저장 실패', e); } }
+    return {
+      init: function () { load(); return this; },
+      data: function () { return _d; },
+      getKey: function (p) { return (_d.keys[p] || '').trim(); },
+      setKey: function (p, v) { _d.keys[p] = (v || '').trim(); persist(); },
+      hasKey: function (p) { return !!this.getKey(p); },
+      provider: function () { return _d.provider; },
+      setProvider: function (p) { _d.provider = p; persist(); },
+      chat: function (p) { return _d.chats[p] || (_d.chats[p] = []); },
+      pushMessage: function (p, msg) { this.chat(p).push(msg); persist(); },
+      replaceLast: function (p, msg) { const c = this.chat(p); c[c.length - 1] = msg; persist(); },
+      clearChat: function (p) { _d.chats[p] = []; persist(); },
+    };
+  })();
+
+  // 각 제공업체 호출 — 사용자의 키로 브라우저에서 직접 요청 (방법 A)
+  const AI_PROVIDERS = {
+    gpt: {
+      name: 'ChatGPT', vendor: 'OpenAI', badge: 'GPT', model: 'gpt-4o-mini',
+      keyHint: 'OpenAI API 키 (sk-... 로 시작). platform.openai.com → API keys 에서 발급',
+      keyUrl: 'https://platform.openai.com/api-keys',
+      async send(key, history) {
+        const res = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+          body: JSON.stringify({ model: this.model, messages: history.map(function (m) { return { role: m.role, content: m.content }; }) }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+        return data.choices[0].message.content;
+      },
+    },
+    gemini: {
+      name: 'Gemini', vendor: 'Google', badge: 'G', model: 'gemini-1.5-flash',
+      keyHint: 'Google AI Studio API 키. aistudio.google.com → Get API key 에서 발급',
+      keyUrl: 'https://aistudio.google.com/app/apikey',
+      async send(key, history) {
+        const contents = history.map(function (m) { return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }; });
+        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + this.model + ':generateContent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({ contents: contents }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+        const cand = data.candidates && data.candidates[0];
+        if (!cand || !cand.content || !cand.content.parts) throw new Error('응답이 비었습니다 (안전 필터 등으로 차단되었을 수 있어요).');
+        return cand.content.parts.map(function (p) { return p.text || ''; }).join('');
+      },
+    },
+    claude: {
+      name: 'Claude', vendor: 'Anthropic', badge: 'C', model: 'claude-3-5-sonnet-20241022',
+      keyHint: 'Anthropic API 키 (sk-ant-... 로 시작). console.anthropic.com → API Keys 에서 발급',
+      keyUrl: 'https://console.anthropic.com/settings/keys',
+      async send(key, history) {
+        const res = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': key,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({ model: this.model, max_tokens: 1024, messages: history.map(function (m) { return { role: m.role, content: m.content }; }) }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error((data && data.error && data.error.message) || ('HTTP ' + res.status));
+        return (data.content || []).map(function (b) { return b.text || ''; }).join('');
+      },
+    },
+  };
+
+  /* =======================================================================
      4. 공용 유틸 (뷰 간 공유)
      ======================================================================= */
   function isExam(d, b) { if (b.kind) return b.kind === 'exam'; const s = d.subjects.find(function (x) { return x.id === b.subjectId; }); return s ? s.kind === 'exam' : true; }
@@ -943,29 +1031,139 @@
     root.append(grid);
   }
 
+  function parseLocalDateTime(s) {
+    if (!s) return null;
+    if (s instanceof Date) return s;
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(s);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6] || 0));
+    return new Date(s);
+  }
+  // 같은 날짜 안에서 시간이 겹치는 블록들을 열(column) 단위로 나란히 배치
+  function layoutDayBlocks(items) {
+    if (!items.length) return [];
+    const sorted = items.slice().sort(function (a, b) {
+      return (a.startMin - b.startMin) || (b.endMin - a.endMin);
+    });
+    const clusters = [];
+    let cur = [], clusterEnd = -1;
+    sorted.forEach(function (it) {
+      if (cur.length && it.startMin < clusterEnd) {
+        cur.push(it);
+        if (it.endMin > clusterEnd) clusterEnd = it.endMin;
+      } else {
+        if (cur.length) clusters.push(cur);
+        cur = [it];
+        clusterEnd = it.endMin;
+      }
+    });
+    if (cur.length) clusters.push(cur);
+
+    const out = [];
+    clusters.forEach(function (cluster) {
+      const colEnds = [];
+      cluster.forEach(function (it) {
+        let col = -1;
+        for (let i = 0; i < colEnds.length; i++) {
+          if (colEnds[i] <= it.startMin) { col = i; break; }
+        }
+        if (col === -1) { col = colEnds.length; colEnds.push(it.endMin); }
+        else { colEnds[col] = it.endMin; }
+        it.col = col;
+      });
+      const totalCols = colEnds.length;
+      cluster.forEach(function (it) { it.totalCols = totalCols; out.push(it); });
+    });
+    return out;
+  }
   function buildTimetable(d, weekDates, ctx) {
     const card = el('div', { class: 'card desktop-only', style: 'overflow-x:auto;padding:16px' });
-    const START_H = 7, END_H = 24;
-    const table = el('div', { class: 'timetable', style: 'grid-template-rows: auto repeat(' + (END_H - START_H) + ', 44px)' });
+    const ROW_H = 44, END_H = 24;
+    let startH = 7;
+
+    // 각 요일의 시간 구간(분 단위) 계산 — 입력된 시간 길이만큼 블록 높이를 채움
+    const daySegments = weekDates.map(function (k) {
+      const dayStart = parseLocalDateTime(k + 'T00:00:00');
+      const dayEnd = addDays(dayStart, 1);
+      const segs = [];
+      d.blocks.forEach(function (b) {
+        const bs = parseLocalDateTime(b.start);
+        let be = parseLocalDateTime(b.end);
+        if (!bs || isNaN(bs.getTime())) return;
+        if (!be || isNaN(be.getTime()) || be <= bs) be = new Date(bs.getTime() + 30 * 60000);
+        if (bs < dayEnd && be > dayStart) {
+          const startMin = Math.max(0, (bs - dayStart) / 60000);
+          const endMin = Math.min(END_H * 60, (be - dayStart) / 60000);
+          if (endMin > startMin) {
+            startH = Math.min(startH, Math.floor(startMin / 60));
+            segs.push({ block: b, startMin: startMin, endMin: endMin });
+          }
+        }
+      });
+      return layoutDayBlocks(segs);
+    });
+
+    const table = el('div', { class: 'timetable' });
     table.append(el('div', { class: 'tt-head', style: 'border-left:none' }, ''));
     weekDates.forEach(function (k, i) { table.append(el('div', { class: 'tt-head', style: k === todayKey() ? 'color:var(--accent)' : '' }, WEEKDAYS[i] + ' ' + k.slice(8))); });
-    for (let h = START_H; h < END_H; h++) {
-      table.append(el('div', { class: 'tt-timecol' }, String(h)));
-      weekDates.forEach(function (k) {
-        const cell = el('div', { class: 'tt-cell', role: 'button', tabindex: '0', 'aria-label': k + ' ' + h + '시 블록 추가' });
-        d.blocks.filter(function (b) { return b.date === k && new Date(b.start).getHours() === h; }).forEach(function (b) { cell.append(blockChip(d, b, ctx)); });
-        cell.addEventListener('click', function (e) { if (e.target === cell) openBlockEditor(null, ctx, weekDates, { date: k, hour: h }); });
-        cell.addEventListener('keydown', function (e) { if (e.key === 'Enter') openBlockEditor(null, ctx, weekDates, { date: k, hour: h }); });
-        table.append(cell);
-      });
+
+    const timesCol = el('div', { class: 'tt-times' });
+    for (let h = startH; h < END_H; h++) {
+      timesCol.append(el('div', { class: 'tt-timecol', style: 'height:' + ROW_H + 'px' }, String(h)));
     }
+    table.append(timesCol);
+
+    weekDates.forEach(function (k, dayIdx) {
+      const dayCol = el('div', { class: 'tt-daycol', style: 'height:' + ((END_H - startH) * ROW_H) + 'px' });
+      for (let h = startH; h < END_H; h++) {
+        const cell = el('div', {
+          class: 'tt-cell' + (h === END_H - 1 ? ' tt-cell-last' : ''),
+          style: 'height:' + ROW_H + 'px',
+          role: 'button',
+          tabindex: '0',
+          'aria-label': k + ' ' + h + '시 블록 추가',
+        });
+        cell.addEventListener('click', function (e) { if (e.target === cell) openBlockEditor(null, ctx, weekDates, { date: k, hour: h }); });
+        cell.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openBlockEditor(null, ctx, weekDates, { date: k, hour: h }); } });
+        dayCol.append(cell);
+      }
+      daySegments[dayIdx].forEach(function (seg) {
+        dayCol.append(blockChip(d, seg, startH, ROW_H, ctx));
+      });
+      table.append(dayCol);
+    });
+
     card.append(table, el('p', { class: 'hint', style: 'margin:8px 0 0' }, '빈 칸을 클릭하면 해당 시간에 블록을 추가합니다. 이동·휴식은 별도 블록으로 확보하세요.'));
     return card;
   }
-  function blockChip(d, b, ctx) {
+  function blockChip(d, seg, startH, rowH, ctx) {
+    const b = seg.block;
     const kind = blockKind(d, b);
     const sub = Store.subject(b.subjectId);
-    return el('button', { class: 'tt-block ' + kind, title: b.title + ' ' + fmtTime(b.start) + '~' + fmtTime(b.end), onclick: function (e) { e.stopPropagation(); openBlockEditor(null, ctx, null, { editBlock: b }); } }, (b.locked ? '🔒 ' : '') + (b.title || (sub ? sub.name : '블록')));
+    const label = (b.locked ? '🔒 ' : '') + (b.title || (sub ? sub.name : '블록'));
+    const timeText = fmtTime(b.start) + '~' + fmtTime(b.end);
+
+    const topPx = ((seg.startMin - startH * 60) / 60) * rowH + 1;
+    const rawHeightPx = ((seg.endMin - seg.startMin) / 60) * rowH;
+    const heightPx = Math.max(16, rawHeightPx - 2);
+
+    const n = seg.totalCols || 1;
+    const col = seg.col || 0;
+    const gapTotal = 4 + (n - 1) * 2;
+    const widthExpr = n === 1 ? 'calc(100% - 4px)' : 'calc((100% - ' + gapTotal + 'px) / ' + n + ')';
+    const leftExpr = n === 1 ? '2px' : 'calc(2px + ' + col + ' * ((100% - ' + gapTotal + 'px) / ' + n + ' + 2px))';
+
+    const cls = 'tt-block ' + kind + (heightPx < 36 ? ' compact' : '') + (heightPx >= 60 ? ' tall' : '');
+    const style = 'top:' + topPx + 'px;height:' + heightPx + 'px;left:' + leftExpr + ';width:' + widthExpr + ';';
+
+    const children = [el('span', { class: 'tt-block-title' }, label)];
+    if (heightPx >= 36) children.push(el('span', { class: 'tt-block-time' }, timeText));
+
+    return el('button', {
+      class: cls,
+      style: style,
+      title: (b.title || (sub ? sub.name : '블록')) + ' (' + timeText + ')',
+      onclick: function (e) { e.stopPropagation(); openBlockEditor(null, ctx, null, { editBlock: b }); },
+    }, children);
   }
   function buildMobileDay(d, weekDates, ctx) {
     const wrap = el('div', { class: 'mobile-day-view stack' });
@@ -989,8 +1187,11 @@
     const edit = opts.editBlock || null;
     const b = edit || {};
     const defaultDate = b.date || opts.date || (weekDates ? weekDates[0] : todayKey());
-    const defaultStart = b.start ? b.start.slice(11, 16) : (opts.hour != null ? String(opts.hour).padStart(2, '0') + ':00' : '09:00');
-    const defaultEnd = b.end ? b.end.slice(11, 16) : (opts.hour != null ? String(Math.min(23, opts.hour + 2)).padStart(2, '0') + ':00' : '11:00');
+    const startHour = opts.hour != null ? opts.hour : 9;
+    const defaultDurMin = (task && task.estMin) ? clampNum(task.estMin, 15, 720) : 120;
+    const endTotalMin = Math.min(24 * 60, startHour * 60 + defaultDurMin);
+    const defaultStart = b.start ? b.start.slice(11, 16) : String(startHour).padStart(2, '0') + ':00';
+    const defaultEnd = b.end ? b.end.slice(11, 16) : String(Math.floor(endTotalMin / 60) % 24).padStart(2, '0') + ':' + String(endTotalMin % 60).padStart(2, '0');
 
     const titleInput = el('input', { type: 'text', value: b.title || (task ? task.title : ''), placeholder: '블록 이름' });
     const kindSel = el('select', {});
@@ -1869,38 +2070,173 @@
      13-b. AI 도구 — 자주 쓰는 AI 서비스 바로가기 모음
      각 서비스의 공식 페이지를 새 탭으로 엽니다 (API 연동 아님).
      ======================================================================= */
-  const AI_TOOLS = [
-    { id: 'gpt',    name: 'ChatGPT', vendor: 'OpenAI',        url: 'https://chatgpt.com/',           desc: '질문 정리·답안 초안·개념 설명에 두루 쓰기 좋습니다.', badge: 'GPT' },
-    { id: 'gemini', name: 'Gemini',  vendor: 'Google',        url: 'https://gemini.google.com/',     desc: '구글 검색·문서와 잘 붙는 범용 모델입니다.',           badge: 'G' },
-    { id: 'claude', name: 'Claude',  vendor: 'Anthropic',     url: 'https://claude.ai/',             desc: '긴 지문·판례 읽고 정리하는 작업에 강합니다.',          badge: 'C' },
-    { id: 'manus',  name: 'Manus',   vendor: 'Butterfly Effect', url: 'https://manus.im/',          desc: '여러 단계를 스스로 처리하는 에이전트형 도구입니다.',    badge: 'M' },
-    { id: 'kiro',   name: 'Kiro',    vendor: 'AWS',           url: 'https://app.kiro.dev/',          desc: '스펙 기반으로 코드를 만드는 개발용 에이전트입니다.',    badge: 'K' },
+  // 채팅 지원 모델(키 입력형) + 링크 전용(Manus/Kiro)
+  const AI_LINK_TOOLS = [
+    { id: 'manus', name: 'Manus', vendor: 'Butterfly Effect', url: 'https://manus.im/',     desc: '여러 단계를 스스로 처리하는 에이전트형 도구입니다.', badge: 'M' },
+    { id: 'kiro',  name: 'Kiro',  vendor: 'AWS',              url: 'https://app.kiro.dev/', desc: '스펙 기반으로 코드를 만드는 개발용 에이전트입니다.', badge: 'K' },
   ];
+  let _aiSending = false;
   function renderAiTools(root, ctx) {
-    root.append(el('p', { class: 'page-intro' }, '공부 중 자주 쓰는 AI 서비스를 한곳에 모았습니다. 카드를 누르면 공식 사이트가 새 탭에서 열립니다. (로그인·대화 내용은 각 서비스에 저장되며, 이 홈페이지에는 저장되지 않습니다.)'));
+    const provider = AiStore.provider();
+    root.append(el('p', { class: 'page-intro' }, '여기서 바로 AI와 대화할 수 있습니다. 쓰려는 모델의 API 키를 한 번 입력하면 이 브라우저에 저장되고, 질문·답변이 아래 채팅창에 바로 표시됩니다.'));
 
-    const grid = el('div', { class: 'grid grid-3' });
-    AI_TOOLS.forEach(function (t) {
+    // 모델 선택 탭
+    const tabs = el('div', { class: 'tabs', role: 'tablist', style: 'margin-bottom:12px' });
+    Object.keys(AI_PROVIDERS).forEach(function (pid) {
+      const p = AI_PROVIDERS[pid];
+      const active = pid === provider;
+      tabs.append(el('button', { class: 'tab' + (active ? ' active' : ''), role: 'tab', 'aria-selected': active ? 'true' : 'false', onclick: function () { AiStore.setProvider(pid); ctx.refresh(); } },
+        [p.name, AiStore.hasKey(pid) ? '' : ' 🔑']));
+    });
+    root.append(tabs);
+
+    const p = AI_PROVIDERS[provider];
+
+    // 키가 없으면 키 입력 안내 카드
+    if (!AiStore.hasKey(provider)) {
+      root.append(buildKeyCard(provider, ctx));
+    } else {
+      root.append(buildChatPanel(provider, ctx));
+      // 키 관리(변경/삭제)는 접은 상태로
+      const det = el('details', { style: 'margin-top:10px' });
+      det.append(el('summary', { class: 'hint', style: 'cursor:pointer' }, p.name + ' API 키 관리 (변경·삭제)'));
+      det.append(buildKeyCard(provider, ctx, true));
+      root.append(det);
+    }
+
+    // 링크 전용 도구 (Manus/Kiro)
+    root.append(el('div', { class: 'section-head', style: 'margin-top:24px' }, [el('h3', {}, '바로가기 (채팅 미지원)')]));
+    root.append(el('p', { class: 'hint', style: 'margin-top:-6px' }, 'Manus·Kiro는 공개 채팅 API가 없어 공식 사이트로 바로 연결합니다.'));
+    const linkGrid = el('div', { class: 'grid grid-2' });
+    AI_LINK_TOOLS.forEach(function (t) {
       const open = function () { window.open(t.url, '_blank', 'noopener,noreferrer'); };
       const card = el('div', { class: 'card', role: 'button', tabindex: '0', style: 'cursor:pointer;display:flex;flex-direction:column;gap:8px' });
       card.append(
         el('div', { class: 'row', style: 'gap:10px;align-items:center' }, [
-          el('span', { 'aria-hidden': 'true', style: 'flex:0 0 auto;width:40px;height:40px;border-radius:10px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1rem' }, t.badge),
-          el('div', { style: 'flex:1;min-width:0' }, [
-            el('div', { style: 'font-weight:800;font-size:1.05rem' }, t.name),
-            el('div', { class: 'hint', style: 'font-size:.78rem' }, t.vendor),
-          ]),
+          el('span', { 'aria-hidden': 'true', style: 'flex:0 0 auto;width:36px;height:36px;border-radius:9px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-weight:800' }, t.badge),
+          el('div', { style: 'flex:1;min-width:0' }, [el('div', { style: 'font-weight:800' }, t.name), el('div', { class: 'hint', style: 'font-size:.78rem' }, t.vendor)]),
         ]),
         el('p', { class: 'hint', style: 'margin:0;flex:1' }, t.desc),
-        el('button', { class: 'btn btn-primary btn-block', onclick: function (e) { e.stopPropagation(); open(); } }, t.name + ' 열기 ↗')
+        el('button', { class: 'btn btn-block', onclick: function (e) { e.stopPropagation(); open(); } }, t.name + ' 열기 ↗')
       );
       card.addEventListener('click', open);
       card.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
-      grid.append(card);
+      linkGrid.append(card);
     });
-    root.append(grid);
+    root.append(linkGrid);
 
-    root.append(el('p', { class: 'hint', style: 'margin-top:16px' }, '참고: AI 답변은 사실과 다를 수 있으니, 조문·판례·공식 공고는 반드시 원문으로 확인하세요.'));
+    root.append(el('p', { class: 'hint', style: 'margin-top:16px' }, '참고: API 키는 이 브라우저에만 저장되며(클라우드 동기화 대상 아님) AI 답변은 사실과 다를 수 있으니 조문·판례·공고는 원문으로 확인하세요.'));
+  }
+
+  function buildKeyCard(provider, ctx, compact) {
+    const p = AI_PROVIDERS[provider];
+    const card = el('div', { class: 'card' });
+    if (!compact) card.append(el('h3', {}, p.name + ' 사용 설정'));
+    card.append(el('p', { class: 'hint', style: 'margin-top:' + (compact ? '8px' : '4px') }, p.keyHint));
+    const input = el('input', { type: 'password', placeholder: p.name + ' API 키 붙여넣기', value: AiStore.getKey(provider), autocomplete: 'off', spellcheck: 'false' });
+    const row = el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;margin-top:8px' }, [
+      el('div', { class: 'field', style: 'flex:1;min-width:220px;margin:0' }, [input]),
+      el('button', { class: 'btn btn-primary', onclick: function () {
+        const v = input.value.trim();
+        if (!v) { ctx.toast('API 키를 입력하세요.', 'warn'); return; }
+        AiStore.setKey(provider, v); ctx.refresh(); ctx.toast(p.name + ' 키를 저장했습니다.');
+      } }, '저장'),
+    ]);
+    card.append(row);
+    if (AiStore.hasKey(provider)) {
+      card.append(el('button', { class: 'btn btn-sm btn-danger', style: 'margin-top:8px', onclick: function () { AiStore.setKey(provider, ''); ctx.refresh(); ctx.toast(p.name + ' 키를 삭제했습니다.'); } }, '키 삭제'));
+    }
+    card.append(el('p', { class: 'hint', style: 'margin-top:8px' }, ['키 발급: ', el('a', { href: p.keyUrl, target: '_blank', rel: 'noopener noreferrer' }, p.keyUrl + ' ↗')]));
+    return card;
+  }
+
+  function buildChatPanel(provider, ctx) {
+    const p = AI_PROVIDERS[provider];
+    const wrap = el('div', { class: 'card', style: 'display:flex;flex-direction:column;padding:0;overflow:hidden' });
+
+    // 헤더
+    wrap.append(el('div', { class: 'row between', style: 'padding:12px 16px;border-bottom:1px solid var(--border)' }, [
+      el('div', { class: 'row', style: 'gap:8px;align-items:center' }, [
+        el('span', { 'aria-hidden': 'true', style: 'width:30px;height:30px;border-radius:8px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem' }, p.badge),
+        el('div', {}, [el('strong', {}, p.name), el('span', { class: 'hint', style: 'margin-left:8px;font-size:.75rem' }, p.model)]),
+      ]),
+      el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { AiStore.clearChat(provider); ctx.refresh(); } }, '대화 지우기'),
+    ]));
+
+    // 메시지 영역
+    const msgs = el('div', { id: 'ai-msgs', style: 'padding:16px;display:flex;flex-direction:column;gap:12px;min-height:280px;max-height:52vh;overflow-y:auto' });
+    const history = AiStore.chat(provider);
+    if (history.length === 0) {
+      msgs.append(el('div', { class: 'empty', style: 'padding:32px 0;margin:auto' }, [el('span', { class: 'emoji' }, '💬'), el('h3', {}, p.name + '에게 물어보세요'), el('p', {}, '예: "진보성 판단에서 사후적 고찰 금지가 뭔지 쉽게 설명해줘"')]));
+    } else {
+      history.forEach(function (m) { msgs.append(renderAiMessage(m)); });
+    }
+    wrap.append(msgs);
+
+    // 입력 영역
+    const ta = el('textarea', { placeholder: p.name + '에게 질문 (Enter 전송 · Shift+Enter 줄바꿈)', rows: '2', style: 'flex:1;min-height:44px;max-height:160px;resize:vertical' });
+    const sendBtn = el('button', { class: 'btn btn-primary', style: 'align-self:stretch' }, _aiSending ? '전송 중…' : '전송');
+    if (_aiSending) { ta.disabled = true; sendBtn.disabled = true; }
+
+    function doSend() {
+      const text = ta.value.trim();
+      if (!text || _aiSending) return;
+      ta.value = '';
+      sendMessage(provider, text, ctx);
+    }
+    sendBtn.onclick = doSend;
+    ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
+
+    wrap.append(el('div', { class: 'row', style: 'gap:8px;padding:12px 16px;border-top:1px solid var(--border);align-items:flex-end' }, [ta, sendBtn]));
+
+    // 렌더 직후 스크롤 하단 + 입력창 포커스
+    setTimeout(function () { msgs.scrollTop = msgs.scrollHeight; if (!_aiSending) ta.focus(); }, 0);
+    return wrap;
+  }
+
+  function renderAiMessage(m) {
+    const mine = m.role === 'user';
+    const bubble = el('div', {
+      class: 'ai-bubble ' + (mine ? 'me' : 'bot') + (m.error ? ' err' : ''),
+      style: 'max-width:82%;padding:10px 14px;border-radius:14px;white-space:pre-wrap;word-break:break-word;line-height:1.6;'
+        + (mine
+          ? 'align-self:flex-end;background:var(--accent);color:var(--on-accent);border-bottom-right-radius:4px'
+          : (m.error
+            ? 'align-self:flex-start;background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-fg);border-bottom-left-radius:4px'
+            : 'align-self:flex-start;background:var(--bg);border:1px solid var(--border);border-bottom-left-radius:4px')),
+    }, m.content || (m.pending ? '…' : ''));
+    return bubble;
+  }
+
+  async function sendMessage(provider, text, ctx) {
+    const p = AI_PROVIDERS[provider];
+    const key = AiStore.getKey(provider);
+    if (!key) { ctx.toast('먼저 API 키를 입력하세요.', 'warn'); return; }
+
+    AiStore.pushMessage(provider, { role: 'user', content: text });
+    AiStore.pushMessage(provider, { role: 'assistant', content: '', pending: true });
+    _aiSending = true;
+    ctx.refresh();
+
+    try {
+      // pending 메시지는 요청 history에서 제외
+      const history = AiStore.chat(provider).filter(function (m) { return !m.pending; });
+      const answer = await p.send(key, history);
+      AiStore.replaceLast(provider, { role: 'assistant', content: answer });
+    } catch (e) {
+      let hint = (e && e.message) ? e.message : String(e);
+      if (/Failed to fetch|NetworkError|CORS/i.test(hint)) {
+        hint = '네트워크/CORS 오류로 브라우저에서 직접 호출이 막혔습니다. 키가 맞는지, 네트워크 상태를 확인하세요. (OpenAI는 환경에 따라 브라우저 직접 호출이 제한될 수 있습니다.)';
+      } else if (/401|invalid|api key|unauthor/i.test(hint)) {
+        hint = 'API 키가 올바르지 않거나 권한이 없습니다. 키를 다시 확인하세요. (' + hint + ')';
+      } else if (/429|quota|rate/i.test(hint)) {
+        hint = '요청 한도/크레딧을 초과했습니다. 잠시 후 다시 시도하거나 결제·사용량을 확인하세요. (' + hint + ')';
+      }
+      AiStore.replaceLast(provider, { role: 'assistant', content: '오류: ' + hint, error: true });
+    } finally {
+      _aiSending = false;
+      ctx.refresh();
+    }
   }
 
   /* =======================================================================
@@ -2063,6 +2399,7 @@
 
   function boot() {
     Store.init();
+    AiStore.init();
     const d = Store.data();
     document.documentElement.setAttribute('data-theme', d.settings.theme || 'light');
     buildShell();
