@@ -137,6 +137,7 @@
   const DEFAULT_COURSES_2026_2 = [
     {
       id: 'course-26-2-cv',
+      code: 'EEE3545',
       name: '기초컴퓨터비전',
       semester: '2026-2',
       credits: 3,
@@ -149,6 +150,7 @@
     },
     {
       id: 'course-26-2-phys2',
+      code: 'PHY1012',
       name: '공학물리학및실험(2)',
       semester: '2026-2',
       credits: 4,
@@ -161,6 +163,7 @@
     },
     {
       id: 'course-26-2-semi',
+      code: 'EEE3220',
       name: '반도체물성',
       semester: '2026-2',
       credits: 3,
@@ -172,6 +175,7 @@
     },
     {
       id: 'course-26-2-econ',
+      code: 'ENG3002',
       name: '경제성공학',
       semester: '2026-2',
       credits: 3,
@@ -183,6 +187,7 @@
     },
     {
       id: 'course-26-2-neuro',
+      code: 'ENG2009',
       name: '융합뇌공학입문',
       semester: '2026-2',
       credits: 3,
@@ -194,6 +199,7 @@
     },
     {
       id: 'course-26-2-netlab',
+      code: 'EEE4474',
       name: '네트워크실험',
       semester: '2026-2',
       credits: 2,
@@ -202,6 +208,44 @@
       schedule: [
         { day: 4, start: '09:00', end: '13:50' },
       ],
+    },
+    {
+      id: 'course-26-2-chapel',
+      code: 'YCA1008',
+      name: '채플(D) (비대면)',
+      semester: '2026-2',
+      credits: 0.5,
+      room: '비대면 온라인',
+      link: '',
+      schedule: [],
+    },
+  ];
+
+  // LearnUs 대시보드에서 확인된 기본 예정 마감 항목 (최초 1회 자동 등록)
+  const DEFAULT_ASSIGNMENTS_2026_2 = [
+    {
+      id: 'lu-init-semi-ch5',
+      externalId: 'lu-init-semi-ch5',
+      title: '[동영상 마감] Lecture_Chapter 5',
+      courseId: 'course-26-2-semi',
+      courseName: '반도체물성',
+      due: '2026-11-02T23:59:00',
+      estMin: 45,
+      link: 'https://ys.learnus.org/',
+      written: false,
+      submitted: false,
+    },
+    {
+      id: 'lu-init-chapel-w9',
+      externalId: 'lu-init-chapel-w9',
+      title: '[동영상 마감] 9주차 채플',
+      courseId: 'course-26-2-chapel',
+      courseName: '채플(D) (비대면)',
+      due: '2026-11-02T23:59:00',
+      estMin: 30,
+      link: 'https://ys.learnus.org/',
+      written: false,
+      submitted: false,
     },
   ];
 
@@ -213,6 +257,8 @@
         electiveSubject: '디자인보호법', weeklyExamGoalH: 30,
         theme: 'light', readingWide: false, createdAt: new Date().toISOString(), onboarded: false,
         seededCourses2026_2: true,
+        seededLearnUsInit2026_2: true,
+        lastLearnUsSyncAt: null,
       },
       subjects: [
         { id: 'sub-patent', name: '특허법', kind: 'exam', color: '#355B36' },
@@ -221,7 +267,11 @@
         { id: 'sub-elec', name: '선택과목', kind: 'exam', color: '#78572C' },
       ],
       tasks: [], blocks: [], sessions: [], notes: [], answers: [],
-      cards: [], courses: JSON.parse(JSON.stringify(DEFAULT_COURSES_2026_2)), assignments: [], inbox: [], focusToday: [],
+      cards: [],
+      courses: JSON.parse(JSON.stringify(DEFAULT_COURSES_2026_2)),
+      assignments: JSON.parse(JSON.stringify(DEFAULT_ASSIGNMENTS_2026_2)),
+      notices: [],
+      inbox: [], focusToday: [],
       reviews: [], retros: {}, lastOpenNote: null,
       // 주간 기준 계획(확정 목표) 보관: { 'YYYY-MM-DD(월요일)': { planMin, confirmedAt } }
       // 계획을 줄여도 이행률이 부풀려지지 않도록 '최초 확정'을 분리 보관 (보고서 6쪽)
@@ -237,17 +287,45 @@
       const base = defaultData();
       const rawSettings = d && d.settings ? d.settings : {};
       const alreadySeeded = !!rawSettings.seededCourses2026_2;
+      const alreadySeededLu = !!rawSettings.seededLearnUsInit2026_2;
       const next = Object.assign({}, base, d, {
-        settings: Object.assign({}, base.settings, rawSettings, { seededCourses2026_2: true }),
+        settings: Object.assign({}, base.settings, rawSettings, {
+          seededCourses2026_2: true,
+          seededLearnUsInit2026_2: true,
+        }),
       });
+      if (!Array.isArray(next.courses)) next.courses = [];
+      if (!Array.isArray(next.assignments)) next.assignments = [];
+      if (!Array.isArray(next.notices)) next.notices = [];
+
+      // 기존 과목에 학정번호(code) 보강
+      next.courses.forEach(function (c) {
+        if (c && !c.code) {
+          const def = DEFAULT_COURSES_2026_2.find(function (dc) { return dc.id === c.id || dc.name === c.name; });
+          if (def && def.code) c.code = def.code;
+        }
+      });
+
       if (!alreadySeeded) {
-        if (!Array.isArray(next.courses)) next.courses = [];
         const existingIds = new Set(next.courses.map(function (c) { return c && c.id; }));
         const existingNames = new Set(next.courses.map(function (c) { return c && c.name; }));
         DEFAULT_COURSES_2026_2.forEach(function (c) {
           if (!existingIds.has(c.id) && !existingNames.has(c.name)) {
             next.courses.push(JSON.parse(JSON.stringify(c)));
           }
+        });
+      } else if (!alreadySeededLu) {
+        // 시간표만 먼저 등록된 기존 브라우저에 비대면 채플(D) 1회 보강
+        const chapel = DEFAULT_COURSES_2026_2.find(function (c) { return c.id === 'course-26-2-chapel'; });
+        if (chapel && !next.courses.some(function (c) { return c && (c.id === chapel.id || c.name === chapel.name); })) {
+          next.courses.push(JSON.parse(JSON.stringify(chapel)));
+        }
+      }
+
+      if (!alreadySeededLu) {
+        const asgIds = new Set(next.assignments.map(function (a) { return a && (a.externalId || a.id); }));
+        DEFAULT_ASSIGNMENTS_2026_2.forEach(function (a) {
+          if (!asgIds.has(a.id)) next.assignments.push(JSON.parse(JSON.stringify(a)));
         });
       }
       return next;
@@ -257,7 +335,7 @@
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) { _data = defaultData(); return; }
         const parsed = JSON.parse(raw);
-        const neededSeed = !(parsed && parsed.settings && parsed.settings.seededCourses2026_2);
+        const neededSeed = !(parsed && parsed.settings && parsed.settings.seededCourses2026_2 && parsed.settings.seededLearnUsInit2026_2);
         _data = migrate(parsed); _loadError = null;
         if (neededSeed) save();
       } catch (e) { _loadError = e; _data = defaultData(); console.error('불러오기 실패 — 마지막 저장본 보존', e); }
@@ -309,7 +387,7 @@
         // 앱 식별자(있으면) 확인
         if (parsed.app && parsed.app !== 'patent-study-home') throw new Error('다른 앱의 백업 파일로 보입니다 (app=' + parsed.app + ').');
         // 컬렉션은 배열이어야 함
-        const cols = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','inbox','reviews','subjects'];
+        const cols = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','inbox','reviews','subjects'];
         const issues = [];
         cols.forEach(function (c) {
           if (incoming[c] != null && !Array.isArray(incoming[c])) issues.push(c + ' 필드가 목록이 아님');
@@ -336,7 +414,7 @@
         else {
           // 병합: 동일 ID는 updatedAt 최신 우선, 없으면 기존 유지 + 신규 추가
           next = migrate(_data);
-          ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','inbox','reviews','subjects'].forEach(function (c) {
+          ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','inbox','reviews','subjects'].forEach(function (c) {
             const byId = {};
             (next[c] || []).forEach(function (x) { byId[x.id] = x; });
             (incoming[c] || []).forEach(function (x) {
@@ -358,7 +436,7 @@
         return {
           과업: _data.tasks.length, 계획블록: _data.blocks.length, 세션: _data.sessions.length,
           노트: _data.notes.length, 답안: _data.answers.length, 카드: _data.cards.length,
-          강좌: _data.courses.length, 과제: _data.assignments.length,
+          강좌: _data.courses.length, 과제: _data.assignments.length, 공지: (_data.notices || []).length,
         };
       },
     };
@@ -832,13 +910,30 @@
     const acadCard = el('div', { class: 'card', style: 'background:var(--acad-bg)' });
     acadCard.append(el('h3', {}, '놓치면 안 되는 학업'));
     const upcoming = upcomingAssignments(d);
-    if (upcoming.length === 0) acadCard.append(el('p', { class: 'hint', style: 'color:var(--acad-fg)' }, '임박한 과제 마감이 없습니다.'));
-    else {
+    const unreadImpNotices = (d.notices || []).filter(function (n) { return !n.read && n.important; });
+    if (upcoming.length === 0 && unreadImpNotices.length === 0) {
+      acadCard.append(el('p', { class: 'hint', style: 'color:var(--acad-fg)' }, '임박한 과제 마감이나 미확인 중요 공지가 없습니다.'));
+    } else {
       const ul = el('div', { class: 'stack' });
-      upcoming.slice(0, 3).forEach(function (a) { ul.append(el('div', { style: 'font-size:.9rem' }, [el('strong', {}, a.title), el('span', { class: 'hint', style: 'color:var(--acad-fg)' }, ' · ' + fmtDate(a.due) + (a.submitted ? ' · 제출완료' : ' · 미제출'))])); });
+      upcoming.slice(0, 3).forEach(function (a) {
+        const course = d.courses.find(function (c) { return c.id === a.courseId; });
+        const cLabel = (course && course.name) || a.courseName || '';
+        ul.append(el('div', { style: 'font-size:.9rem' }, [
+          cLabel ? el('span', { class: 'hint', style: 'color:var(--acad-fg);margin-right:4px' }, '[' + cLabel + ']') : '',
+          el('strong', {}, a.title),
+          el('span', { class: 'hint', style: 'color:var(--acad-fg)' }, ' · ' + fmtDate(a.due) + ' · 미제출'),
+        ]));
+      });
+      if (unreadImpNotices.length > 0) {
+        ul.append(el('div', { style: 'font-size:.88rem;margin-top:4px;cursor:pointer;text-decoration:underline', onclick: function () { acadTab = 'notices'; ctx.navigate('academic'); } },
+          '📢 미확인 중요 공지 ' + unreadImpNotices.length + '건 확인하기'));
+      }
       acadCard.append(ul);
     }
-    acadCard.append(el('button', { class: 'btn btn-sm', style: 'margin-top:12px', onclick: function () { ctx.navigate('academic'); } }, '대학 학업 열기'));
+    acadCard.append(el('div', { class: 'row', style: 'gap:6px;margin-top:12px;flex-wrap:wrap' }, [
+      el('button', { class: 'btn btn-sm', onclick: function () { ctx.navigate('academic'); } }, '대학 학업 열기'),
+      el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { openLearnUsSyncModal(ctx); } }, '🔄 LearnUs 동기화'),
+    ]));
     right.append(acadCard);
 
     // 작은 지표 묶음 — 값이 있는 것만, 빈 '미기록' 반복 대신 한 카드에 (보고서 10쪽)
@@ -1007,7 +1102,7 @@
     return d.blocks.filter(function (b) { return isExam(d, b) && b.end > nowIso; }).sort(function (a, b) { return a.start.localeCompare(b.start); })[0] || null;
   }
   function upcomingAssignments(d) {
-    const horizon = addDays(new Date(), 7).toISOString();
+    const horizon = toLocalIso(addDays(new Date(), 7));
     return d.assignments.filter(function (a) { return !a.submitted && a.due && a.due <= horizon; }).sort(function (a, b) { return (a.due || '').localeCompare(b.due || ''); });
   }
   function metricCard(label, value, sub, onClick) {
@@ -2062,43 +2157,100 @@
   function stat(label, val, color) { return el('div', {}, [el('div', { class: 'hint' }, label), el('div', { style: 'font-size:1.3rem;font-weight:800;' + (color ? 'color:' + color : '') }, val)]); }
 
   /* =======================================================================
-     11. 대학 학업 (보고서 13쪽)
+     11. 대학 학업 + LearnUs 자동 동기화 (보고서 13쪽)
      ======================================================================= */
   let acadTab = 'courses';
+  let noticeOnlyImportant = false;
+  let _activeLearnUsModal = null;
+
+  function isImportantNoticeTitle(title, pinned) {
+    if (pinned) return true;
+    return /시험|중간|기말|퀴즈|고사|휴강|보강|과제|레포트|리포트|보고서|제출|마감|연기|변경|실험|발표|성적|채점|출석|출결|필독|중요|특강|실습|프로젝트|quiz|exam|midterm|final|hw|homework|assign|project|report|lab/i.test(title || '');
+  }
+
   function renderAcademic(root, ctx) {
-    root.append(el('p', { class: 'page-intro' }, '대학 기능의 목적은 수험 시간을 예측 가능하게 만드는 것입니다. 수업 참여·과제 제출·시험 준비를 우선 관리합니다.'));
+    const d = Store.data();
+    const unreadImp = (d.notices || []).filter(function (n) { return !n.read && n.important; }).length;
+    const unsubmittedCnt = (d.assignments || []).filter(function (a) { return !a.submitted; }).length;
+
+    const introRow = el('div', { class: 'row between', style: 'gap:12px;flex-wrap:wrap;margin-bottom:12px;align-items:center' }, [
+      el('div', {}, [
+        el('p', { class: 'page-intro', style: 'margin:0' }, '대학 기능의 목적은 수험 시간을 예측 가능하게 만드는 것입니다. 수업 참여·과제 제출·중요 공지를 한곳에서 관리합니다.'),
+        d.settings.lastLearnUsSyncAt
+          ? el('div', { class: 'hint', style: 'font-size:.8rem;margin-top:4px' }, '마지막 LearnUs 동기화: ' + new Date(d.settings.lastLearnUsSyncAt).toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))
+          : el('div', { class: 'hint', style: 'font-size:.8rem;margin-top:4px' }, '비밀번호 입력 없이 브라우저에서 LearnUs 과제·공지를 1클릭으로 불러올 수 있습니다.'),
+      ]),
+      el('button', { class: 'btn btn-primary', onclick: function () { openLearnUsSyncModal(ctx); } }, '🔄 LearnUs 자동 동기화'),
+    ]);
+    root.append(introRow);
+
     const panel = el('div', {});
     const tabs = el('div', { class: 'tabs', role: 'tablist' });
-    [['courses', '수강 과목'], ['assignments', '과제 제출'], ['attendance', '출결']].forEach(function (p) {
-      const btn = el('button', { class: 'tab', role: 'tab', 'aria-selected': String(acadTab === p[0]), onclick: function () { acadTab = p[0]; tabs.querySelectorAll('.tab').forEach(function (t) { t.setAttribute('aria-selected', String(t === btn)); }); renderPanel(); } }, p[1]);
+    const tabDefs = [
+      ['courses', '수강 과목 (' + d.courses.length + ')'],
+      ['assignments', '과제·할일' + (unsubmittedCnt ? ' (' + unsubmittedCnt + ')' : '')],
+      ['notices', '중요 공지' + (unreadImp ? ' (' + unreadImp + ')' : '')],
+      ['attendance', '출결'],
+    ];
+    tabDefs.forEach(function (p) {
+      const btn = el('button', {
+        class: 'tab', role: 'tab', 'aria-selected': String(acadTab === p[0]),
+        onclick: function () {
+          acadTab = p[0];
+          tabs.querySelectorAll('.tab').forEach(function (t) { t.setAttribute('aria-selected', String(t === btn)); });
+          renderPanel();
+        },
+      }, p[1]);
       tabs.append(btn);
     });
     root.append(tabs, panel);
-    function renderPanel() { panel.innerHTML = ''; if (acadTab === 'courses') renderCourses(panel, ctx); else if (acadTab === 'assignments') renderAssignments(panel, ctx); else renderAttendance(panel, ctx); }
+    function renderPanel() {
+      panel.innerHTML = '';
+      if (acadTab === 'courses') renderCourses(panel, ctx);
+      else if (acadTab === 'assignments') renderAssignments(panel, ctx);
+      else if (acadTab === 'notices') renderNotices(panel, ctx);
+      else renderAttendance(panel, ctx);
+    }
     renderPanel();
   }
+
   function renderCourses(root, ctx) {
     const d = Store.data();
     root.append(el('div', { class: 'section-head' }, [el('h2', {}, '수강 과목 ' + d.courses.length + '개'), el('button', { class: 'btn btn-primary', onclick: function () { openCourseEditor(null, ctx); } }, '+ 과목 추가')]));
     if (d.courses.length === 0) { root.append(el('div', { class: 'empty' }, [el('span', { class: 'emoji' }, '🎓'), el('h3', {}, '수강 과목을 등록하세요'), el('p', {}, '고정 수업 시간을 등록하면 주간 계획에서 수험 시간과 충돌을 관리합니다.')])); return; }
     const list = el('div', { class: 'list' });
     d.courses.forEach(function (c) {
+      const schedStr = (c.schedule || []).map(function (s) { return WEEKDAYS[s.day] + ' ' + s.start + '~' + s.end; }).join(', ');
       list.append(el('div', { class: 'item', style: 'cursor:pointer', onclick: function () { openCourseEditor(c, ctx); } }, [
         el('span', { class: 'tag tag-acad' }, '학업'),
-        el('div', { class: 'main' }, [el('div', { class: 'title' }, c.name), el('div', { class: 'meta' }, [c.semester ? c.semester + ' · ' : '', c.credits ? c.credits + '학점 · ' : '', (c.schedule || []).map(function (s) { return WEEKDAYS[s.day] + ' ' + s.start + '~' + s.end; }).join(', '), c.room ? ' · ' + c.room : ''])]),
-        c.link ? el('a', { href: c.link, target: '_blank', rel: 'noopener', class: 'btn btn-sm', onclick: function (e) { e.stopPropagation(); } }, '자료 ↗') : null,
+        el('div', { class: 'main' }, [
+          el('div', { class: 'row', style: 'gap:6px;align-items:center;flex-wrap:wrap' }, [
+            el('span', { class: 'title' }, c.name),
+            c.code ? el('span', { class: 'hint', style: 'font-size:.78rem' }, '(' + c.code + ')') : null,
+            c.progressPct != null ? el('span', { class: 'tag tag-muted', style: 'font-size:.74rem' }, '학습률 ' + c.progressPct + '%') : null,
+          ]),
+          el('div', { class: 'meta' }, [
+            c.semester ? c.semester + ' · ' : '',
+            c.credits ? c.credits + '학점' : '',
+            schedStr ? ' · ' + schedStr : '',
+            c.room ? ' · ' + c.room : '',
+          ]),
+        ]),
+        c.link ? el('a', { href: c.link, target: '_blank', rel: 'noopener noreferrer', class: 'btn btn-sm', onclick: function (e) { e.stopPropagation(); } }, '강의실 ↗') : null,
       ]));
     });
     root.append(list);
   }
+
   function openCourseEditor(course, ctx) {
     const isNew = !course;
-    const c = course ? JSON.parse(JSON.stringify(course)) : { id: null, name: '', semester: '2026-2', credits: 3, room: '', link: '', schedule: [{ day: 0, start: '09:00', end: '10:30' }] };
+    const c = course ? JSON.parse(JSON.stringify(course)) : { id: null, code: '', name: '', semester: '2026-2', credits: 3, room: '', link: '', schedule: [{ day: 0, start: '09:00', end: '10:30' }] };
     const name = el('input', { type: 'text', value: c.name, placeholder: '과목명' });
+    const code = el('input', { type: 'text', value: c.code || '', placeholder: '예: EEE3220' });
     const semester = el('input', { type: 'text', value: c.semester, placeholder: '예: 2026-2' });
     const credits = el('input', { type: 'number', value: c.credits, min: '0', step: '0.5' });
     const room = el('input', { type: 'text', value: c.room, placeholder: '강의실' });
-    const link = el('input', { type: 'text', value: c.link, placeholder: '자료 링크 (URL)' });
+    const link = el('input', { type: 'text', value: c.link, placeholder: '강의실 링크 (URL)' });
     const schedWrap = el('div', { class: 'stack' });
     function renderSched() {
       schedWrap.innerHTML = '';
@@ -2111,9 +2263,9 @@
     }
     renderSched();
     const body = el('div', {}, [
-      el('div', { class: 'field' }, [el('label', {}, '과목명'), name]),
+      el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '과목명'), name]), el('div', { class: 'field' }, [el('label', {}, '학정번호 (선택)'), code])]),
       el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '학기'), semester]), el('div', { class: 'field' }, [el('label', {}, '학점'), credits])]),
-      el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '강의실'), room]), el('div', { class: 'field' }, [el('label', {}, '자료 링크'), link])]),
+      el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '강의실'), room]), el('div', { class: 'field' }, [el('label', {}, '강의실 링크'), link])]),
       el('div', { class: 'field' }, [el('label', {}, '반복 수업 시간'), schedWrap, el('button', { class: 'btn btn-sm', style: 'margin-top:8px', onclick: function () { c.schedule.push({ day: 0, start: '09:00', end: '10:30' }); renderSched(); } }, '+ 시간 추가')]),
     ]);
     const footer = [
@@ -2122,31 +2274,65 @@
       el('button', { class: 'btn', onclick: function () { m.close(); } }, '취소'),
       el('button', { class: 'btn btn-primary', onclick: function () {
         if (!name.value.trim()) { ctx.toast('과목명을 입력하세요.', 'warn'); return; }
-        c.name = name.value.trim(); c.semester = semester.value; c.credits = clampNum(credits.value, 0, 30); c.room = room.value; c.link = link.value;
+        c.name = name.value.trim(); c.code = code.value.trim(); c.semester = semester.value; c.credits = clampNum(credits.value, 0, 30); c.room = room.value; c.link = link.value;
         Store.update(function (dd) { if (isNew) { c.id = Store.id('course'); dd.courses.push(c); } else Object.assign(dd.courses.find(function (x) { return x.id === c.id; }), c); });
         m.close(); ctx.refresh(); ctx.toast('저장했습니다.');
       } }, '저장'),
     ];
     const m = ctx.modal({ title: isNew ? '수강 과목 추가' : '과목 편집', body: body, footer: footer });
   }
+
   function renderAssignments(root, ctx) {
     const d = Store.data();
-    root.append(el('div', { class: 'section-head' }, [el('h2', {}, '과제 ' + d.assignments.length + '개'), el('button', { class: 'btn btn-primary', onclick: function () { openAssignmentEditor(null, ctx); } }, '+ 과제 추가')]));
+    root.append(el('div', { class: 'section-head' }, [
+      el('h2', {}, '과제·할일 ' + d.assignments.length + '개'),
+      el('div', { class: 'row', style: 'gap:8px' }, [
+        el('button', { class: 'btn btn-sm', onclick: function () { openLearnUsSyncModal(ctx); } }, '🔄 LearnUs 불러오기'),
+        el('button', { class: 'btn btn-primary', onclick: function () { openAssignmentEditor(null, ctx); } }, '+ 과제 추가'),
+      ]),
+    ]));
     root.append(el('p', { class: 'hint', style: 'margin-top:-8px;margin-bottom:16px' }, '작성 완료를 제출 완료로 처리하지 않습니다. 홈페이지가 학교 시스템에 자동 제출하지 않습니다.'));
-    if (d.assignments.length === 0) { root.append(el('div', { class: 'empty' }, [el('span', { class: 'emoji' }, '📨'), el('h3', {}, '과제를 등록하세요')])); return; }
+    if (d.assignments.length === 0) {
+      root.append(el('div', { class: 'empty' }, [
+        el('span', { class: 'emoji' }, '📨'),
+        el('h3', {}, '등록된 과제가 없습니다'),
+        el('p', {}, '상단의 "LearnUs 자동 동기화"로 과제와 동영상 출석 마감을 한 번에 불러오거나 직접 추가하세요.'),
+      ]));
+      return;
+    }
+    const nowLocal = toLocalIso(new Date());
+    const sorted = d.assignments.slice().sort(function (a, b) {
+      if (!!a.submitted !== !!b.submitted) return a.submitted ? 1 : -1;
+      return (a.due || '9999').localeCompare(b.due || '9999');
+    });
     const list = el('div', { class: 'list' });
-    d.assignments.slice().sort(function (a, b) { return (a.due || '').localeCompare(b.due || ''); }).forEach(function (a) {
+    sorted.forEach(function (a) {
       const course = d.courses.find(function (c) { return c.id === a.courseId; });
-      const item = el('div', { class: 'item' }, [
-        el('div', { class: 'main', style: 'cursor:pointer', onclick: function () { openAssignmentEditor(a, ctx); } }, [el('div', { class: 'title' }, a.title), el('div', { class: 'meta' }, [course ? course.name + ' · ' : '', a.due ? '마감 ' + fmtDate(a.due) : '마감 없음', a.written ? ' · 작성완료' : '', a.submitted ? ' · 제출완료' : ''])]),
+      const courseLabel = (course && course.name) || a.courseName || '';
+      const overdue = !a.submitted && a.due && a.due < nowLocal;
+      const dueStr = a.due ? (fmtDate(a.due) + (a.due.length >= 16 ? ' ' + a.due.slice(11, 16) : '')) : '마감 없음';
+      const item = el('div', { class: 'item' + (a.submitted ? ' done' : '') }, [
+        el('div', { class: 'main', style: 'cursor:pointer', onclick: function () { openAssignmentEditor(a, ctx); } }, [
+          el('div', { class: 'row', style: 'gap:6px;align-items:center;flex-wrap:wrap' }, [
+            courseLabel ? el('span', { class: 'tag tag-acad' }, courseLabel) : null,
+            overdue ? el('span', { class: 'tag tag-warn' }, '마감 지남') : null,
+            el('span', { class: 'title' }, a.title),
+          ]),
+          el('div', { class: 'meta' }, [
+            '마감 ' + dueStr,
+            a.written ? ' · 작성완료' : '',
+            a.submitted ? ' · 제출완료' : ' · 미제출',
+          ]),
+        ]),
         el('button', { class: 'btn btn-sm' + (a.written ? ' btn-primary' : ''), onclick: function () { Store.update(function (dd) { const x = dd.assignments.find(function (z) { return z.id === a.id; }); x.written = !x.written; }); ctx.refresh(); } }, a.written ? '작성✓' : '작성'),
         el('button', { class: 'btn btn-sm' + (a.submitted ? ' btn-primary' : ''), onclick: function () { Store.update(function (dd) { const x = dd.assignments.find(function (z) { return z.id === a.id; }); x.submitted = !x.submitted; x.submittedAt = x.submitted ? new Date().toISOString() : null; }); ctx.refresh(); } }, a.submitted ? '제출✓' : '제출 확인'),
-        a.link ? el('a', { href: a.link, target: '_blank', rel: 'noopener', class: 'btn btn-sm' }, '제출처 ↗') : null,
+        a.link ? el('a', { href: a.link, target: '_blank', rel: 'noopener noreferrer', class: 'btn btn-sm' }, '열기 ↗') : null,
       ]);
       list.append(item);
     });
     root.append(list);
   }
+
   function openAssignmentEditor(asg, ctx) {
     const d = Store.data();
     const isNew = !asg;
@@ -2169,6 +2355,772 @@
       } }, '저장'),
     ];
     const m = ctx.modal({ title: isNew ? '과제 추가' : '과제 편집', body: body, footer: footer });
+  }
+
+  function renderNotices(root, ctx) {
+    const d = Store.data();
+    const all = (d.notices || []).slice().sort(function (a, b) {
+      if (!!a.read !== !!b.read) return a.read ? 1 : -1;
+      if (!!a.important !== !!b.important) return a.important ? -1 : 1;
+      return (b.date || '').localeCompare(a.date || '');
+    });
+    const filtered = noticeOnlyImportant ? all.filter(function (n) { return n.important || !n.read; }) : all;
+
+    root.append(el('div', { class: 'section-head' }, [
+      el('h2', {}, '공지사항 ' + filtered.length + '건'),
+      el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
+        el('button', {
+          class: 'btn btn-sm' + (noticeOnlyImportant ? ' btn-primary' : ''),
+          onclick: function () { noticeOnlyImportant = !noticeOnlyImportant; ctx.refresh(); },
+        }, noticeOnlyImportant ? '중요·미확인만 보는 중' : '중요·미확인만 필터'),
+        all.some(function (n) { return !n.read; })
+          ? el('button', { class: 'btn btn-sm', onclick: function () { Store.update(function (dd) { (dd.notices || []).forEach(function (n) { n.read = true; }); }); ctx.refresh(); ctx.toast('모든 공지를 확인 처리했습니다.'); } }, '모두 읽음')
+          : null,
+        el('button', { class: 'btn btn-primary btn-sm', onclick: function () { openNoticeEditor(null, ctx); } }, '+ 공지 메모 추가'),
+      ]),
+    ]));
+
+    if (all.length === 0) {
+      root.append(el('div', { class: 'empty' }, [
+        el('span', { class: 'emoji' }, '📢'),
+        el('h3', {}, '아직 불러온 공지사항이 없습니다'),
+        el('p', {}, '상단의 "🔄 LearnUs 자동 동기화" 버튼을 눌러 모든 수강 강좌의 최신 공지사항과 시험·과제 안내를 한 번에 가져오세요.'),
+        el('button', { class: 'btn btn-primary', onclick: function () { openLearnUsSyncModal(ctx); } }, '🔄 LearnUs에서 공지·과제 가져오기'),
+      ]));
+      return;
+    }
+
+    const list = el('div', { class: 'list' });
+    filtered.forEach(function (n) {
+      const course = d.courses.find(function (c) { return c.id === n.courseId; });
+      const cLabel = (course && course.name) || n.courseName || '일반';
+      list.append(el('div', { class: 'item' + (n.read ? ' done' : '') }, [
+        el('div', { class: 'main', style: 'cursor:pointer', onclick: function () { openNoticeEditor(n, ctx); } }, [
+          el('div', { class: 'row', style: 'gap:6px;align-items:center;flex-wrap:wrap' }, [
+            n.important ? el('span', { class: 'tag tag-warn' }, '중요') : null,
+            el('span', { class: 'tag tag-acad' }, cLabel),
+            el('span', { class: 'title' }, n.title),
+          ]),
+          el('div', { class: 'meta' }, [
+            n.date ? n.date : '',
+            n.body ? ' · ' + n.body.slice(0, 60) + (n.body.length > 60 ? '…' : '') : '',
+          ]),
+        ]),
+        el('button', {
+          class: 'btn btn-sm' + (n.read ? '' : ' btn-primary'),
+          onclick: function () {
+            Store.update(function (dd) {
+              const x = (dd.notices || []).find(function (z) { return z.id === n.id; });
+              if (x) x.read = !x.read;
+            });
+            ctx.refresh();
+          },
+        }, n.read ? '읽음✓' : '확인'),
+        n.url ? el('a', {
+          href: n.url, target: '_blank', rel: 'noopener noreferrer', class: 'btn btn-sm',
+          onclick: function () {
+            if (!n.read) {
+              Store.update(function (dd) {
+                const x = (dd.notices || []).find(function (z) { return z.id === n.id; });
+                if (x) x.read = true;
+              });
+              setTimeout(function () { ctx.refresh(); }, 200);
+            }
+          },
+        }, '원문 ↗') : null,
+      ]));
+    });
+    root.append(list);
+  }
+
+  function openNoticeEditor(notice, ctx) {
+    const d = Store.data();
+    const isNew = !notice;
+    const n = notice ? Object.assign({}, notice) : { id: null, title: '', courseId: (d.courses[0] && d.courses[0].id) || '', courseName: '', date: todayKey(), important: true, read: false, url: '', body: '' };
+    const title = el('input', { type: 'text', value: n.title, placeholder: '공지 제목 (예: 중간고사 범위 및 강의실 안내)' });
+    const courseSel = el('select', {});
+    courseSel.append(el('option', { value: '' }, n.courseName ? n.courseName : '(과목 선택)'));
+    d.courses.forEach(function (c) { courseSel.append(el('option', { value: c.id, selected: c.id === n.courseId }, c.name)); });
+    const dateInp = el('input', { type: 'date', value: (n.date || '').slice(0, 10) || todayKey() });
+    const impCb = el('input', { type: 'checkbox', checked: !!n.important, style: 'width:20px;min-height:20px' });
+    const urlInp = el('input', { type: 'text', value: n.url || '', placeholder: 'LearnUs 공지 URL (선택)' });
+    const bodyInp = el('textarea', { rows: '4', placeholder: '중요 내용 메모 (시험 일정, 제출 방식 등)' }, n.body || '');
+
+    const body = el('div', {}, [
+      el('div', { class: 'field' }, [el('label', {}, '공지 제목'), title]),
+      el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '과목'), courseSel]), el('div', { class: 'field' }, [el('label', {}, '공지일'), dateInp])]),
+      el('label', { class: 'row', style: 'gap:8px;margin:8px 0 12px;cursor:pointer' }, [impCb, '중요 공지로 표시 (홈 화면 알림 연동)']),
+      el('div', { class: 'field' }, [el('label', {}, '메모'), bodyInp]),
+      el('div', { class: 'field' }, [el('label', {}, '원문 링크'), urlInp, n.url ? el('p', { class: 'hint' }, el('a', { href: n.url, target: '_blank', rel: 'noopener noreferrer' }, 'LearnUs 원문 열기 ↗')) : null]),
+    ]);
+    const footer = [
+      !isNew ? el('button', { class: 'btn btn-danger', onclick: function () { Store.update(function (dd) { dd.notices = (dd.notices || []).filter(function (x) { return x.id !== n.id; }); }); m.close(); ctx.refresh(); ctx.toast('공지를 삭제했습니다.'); } }, '삭제') : null,
+      el('span', { class: 'spacer' }),
+      el('button', { class: 'btn', onclick: function () { m.close(); } }, '취소'),
+      el('button', { class: 'btn btn-primary', onclick: function () {
+        if (!title.value.trim()) { ctx.toast('공지 제목을 입력하세요.', 'warn'); return; }
+        const pickedCourse = d.courses.find(function (c) { return c.id === courseSel.value; });
+        const updated = Object.assign({}, n, {
+          title: title.value.trim(),
+          courseId: courseSel.value,
+          courseName: pickedCourse ? pickedCourse.name : (n.courseName || ''),
+          date: dateInp.value || todayKey(),
+          important: impCb.checked,
+          url: urlInp.value.trim(),
+          body: bodyInp.value.trim(),
+        });
+        Store.update(function (dd) {
+          if (!Array.isArray(dd.notices)) dd.notices = [];
+          if (isNew) { updated.id = Store.id('ntc'); dd.notices.push(updated); }
+          else {
+            const target = dd.notices.find(function (x) { return x.id === n.id; });
+            if (target) Object.assign(target, updated);
+          }
+        });
+        m.close(); ctx.refresh(); ctx.toast('저장했습니다.');
+      } }, '저장'),
+    ];
+    const m = ctx.modal({ title: isNew ? '공지 메모 추가' : '공지 상세 / 편집', body: body, footer: footer });
+  }
+
+  /* LearnUs 브라우저 탭 내부에서 실행되는 수집기 함수 (비밀번호 불필요 · 동일 출처 세션 활용) */
+  function __learnUsCollectorMain(TARGET_ORIGIN) {
+    (async function () {
+      if (location.hostname.indexOf('learnus.org') < 0) {
+        alert('먼저 로그인된 연세 LearnUs(https://ys.learnus.org/) 탭에서 이 북마크를 클릭해 주세요!');
+        window.open('https://ys.learnus.org/', '_blank');
+        return;
+      }
+
+      var oldBox = document.getElementById('__sh_sync_box');
+      if (oldBox) oldBox.remove();
+      var box = document.createElement('div');
+      box.id = '__sh_sync_box';
+      box.style.cssText = 'position:fixed;right:20px;top:20px;z-index:2147483647;width:360px;max-width:92vw;background:#fff;color:#1b2420;border:2px solid #234B3F;border-radius:14px;padding:16px;box-shadow:0 12px 36px rgba(0,0,0,.25);font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;font-size:14px;line-height:1.5';
+      var titleEl = document.createElement('div');
+      titleEl.style.cssText = 'font-weight:800;font-size:15px;color:#234B3F;margin-bottom:6px';
+      titleEl.textContent = '🔄 나의 수험 공간 · LearnUs 동기화';
+      var statusEl = document.createElement('div');
+      statusEl.style.cssText = 'color:#44524c;font-size:13px;margin-bottom:10px';
+      statusEl.textContent = '1/3 강좌 목록 확인 중…';
+      var actionWrap = document.createElement('div');
+      actionWrap.style.cssText = 'display:flex;flex-direction:column;gap:8px';
+      box.appendChild(titleEl);
+      box.appendChild(statusEl);
+      box.appendChild(actionWrap);
+      document.body.appendChild(box);
+
+      function pad2(n) { return String(n).padStart(2, '0'); }
+      function tsToLocalIso(sec) {
+        var dt = new Date(Number(sec) * 1000);
+        if (isNaN(dt.getTime())) return '';
+        return dt.getFullYear() + '-' + pad2(dt.getMonth() + 1) + '-' + pad2(dt.getDate()) + 'T' + pad2(dt.getHours()) + ':' + pad2(dt.getMinutes()) + ':00';
+      }
+      function parseDateStr(str, withTime) {
+        if (!str) return '';
+        var m = /(20\d{2})\s*[-./년]\s*(\d{1,2})\s*[-./월]\s*(\d{1,2})/.exec(str);
+        var y, mo, da;
+        if (m) { y = m[1]; mo = pad2(m[2]); da = pad2(m[3]); }
+        else {
+          var m2 = /(?:^|\D)(\d{2})\s*[-./]\s*(\d{1,2})\s*[-./]\s*(\d{1,2})(?:\D|$)/.exec(str);
+          if (!m2) return '';
+          y = '20' + m2[1]; mo = pad2(m2[2]); da = pad2(m2[3]);
+        }
+        if (!withTime) return y + '-' + mo + '-' + da;
+        var tm = /(\d{1,2})\s*:\s*(\d{2})/.exec(str);
+        var hh = tm ? pad2(tm[1]) : '23';
+        var mm = tm ? pad2(tm[2]) : '59';
+        return y + '-' + mo + '-' + da + 'T' + hh + ':' + mm + ':00';
+      }
+      async function fetchDoc(url) {
+        var r = await fetch(url, { credentials: 'include' });
+        var html = await r.text();
+        return new DOMParser().parseFromString(html, 'text/html');
+      }
+      function cleanText(s) { return (s || '').replace(/\s+/g, ' ').trim(); }
+
+      try {
+        /* 1) 대시보드에서 수강 강좌 추출 */
+        var dashDoc = (location.pathname === '/' || location.pathname === '/index.php') ? document : await fetchDoc('https://ys.learnus.org/');
+        var courseMap = {};
+        var courses = [];
+        var links = dashDoc.querySelectorAll('a[href*="/course/view.php?id="]');
+        for (var i = 0; i < links.length; i++) {
+          var a = links[i];
+          var u;
+          try { u = new URL(a.getAttribute('href'), location.origin); } catch (e) { continue; }
+          var cid = u.searchParams.get('id');
+          if (!cid || cid === '1' || courseMap[cid]) continue;
+          var card = a.closest('li, .course_box, .course-box, .course-item, .box') || a.parentElement;
+          var heading = a.querySelector('.course-title h3, .course-name, h3, h4, .fullname') || (card && card.querySelector('.course-title h3, .course-name, h3, h4, .fullname'));
+          var rawName = cleanText(heading ? heading.textContent : a.textContent);
+          if (!rawName || rawName.length < 2) continue;
+          rawName = rawName.replace(/^NEW\s+/i, '').replace(/\s*[\[(][12]학기[\])]\s*$/g, '').trim();
+          var cardText = cleanText(card ? card.textContent : '');
+          var isNonCredit = /비교과/.test(cardText) || /폭력예방|법정의무|윤리교육/.test(rawName);
+          var codeMatch = /\(([A-Z]{2,4}\d{4}[^)]*)\)/.exec(rawName) || /([A-Z]{2,4}\d{4}[.\w-]*)/.exec(cardText);
+          var progMatch = /학습률\s*(\d+(?:\.\d+)?)\s*%/.exec(cardText);
+          var cleanCourseTitle = rawName.replace(/\s*\([A-Z]{2,4}\d{4}.*$/, '').trim() || rawName;
+          var cObj = {
+            luId: cid,
+            name: cleanCourseTitle,
+            fullTitle: rawName,
+            code: codeMatch ? codeMatch[1].split('.')[0] : '',
+            url: 'https://ys.learnus.org/course/view.php?id=' + cid,
+            progressPct: progMatch ? Number(progMatch[1]) : null,
+            isNonCredit: isNonCredit
+          };
+          courseMap[cid] = cObj;
+          courses.push(cObj);
+        }
+
+        /* 2) 예정된 일정·과제·동영상 출석 마감 추출 (Moodle AJAX + 캘린더 페이지) */
+        statusEl.textContent = '2/3 예정된 과제·진도 마감 조회 중…';
+        var asgMap = {};
+        function addAsg(item) {
+          if (!item || !item.title) return;
+          if (/Progress\s*start|진도\s*시작|출석\s*시작/i.test(item.title)) return;
+          var t = item.title;
+          if (/Progress\s*stop/i.test(t)) {
+            t = '[동영상 마감] ' + t.replace(/\s*:\s*Progress\s*stop/i, '').trim();
+          }
+          t = t.replace(/\s+(제출 마감|종료|마감일|is due)$/i, '').trim();
+          item.title = t;
+          var key = item.externalId || (item.luCourseId + '::' + t);
+          if (!asgMap[key]) asgMap[key] = item;
+          else {
+            if (!asgMap[key].due && item.due) asgMap[key].due = item.due;
+            if (item.submitted) asgMap[key].submitted = true;
+            if (!asgMap[key].url && item.url) asgMap[key].url = item.url;
+          }
+        }
+
+        var sesskey = (window.M && window.M.cfg && window.M.cfg.sesskey) ? window.M.cfg.sesskey : '';
+        if (!sesskey) {
+          var skMatch = /"sesskey"\s*:\s*"([^"]+)"/.exec(dashDoc.documentElement.innerHTML);
+          if (skMatch) sesskey = skMatch[1];
+        }
+        if (sesskey) {
+          var nowSec = Math.floor(Date.now() / 1000) - 2 * 86400;
+          try {
+            var ajaxRes = await fetch('https://ys.learnus.org/lib/ajax/service.php?sesskey=' + encodeURIComponent(sesskey) + '&info=core_calendar_get_action_events_by_timesort', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify([{ index: 0, methodname: 'core_calendar_get_action_events_by_timesort', args: { timesortfrom: nowSec, limitnum: 50 } }])
+            });
+            var ajaxJson = await ajaxRes.json();
+            var evs = (ajaxJson && ajaxJson[0] && ajaxJson[0].data && ajaxJson[0].data.events) || [];
+            for (var eIdx = 0; eIdx < evs.length; eIdx++) {
+              var ev = evs[eIdx];
+              var evCourseId = ev.course && ev.course.id ? String(ev.course.id) : '';
+              var evCourseName = (ev.course && ev.course.fullname) ? cleanText(ev.course.fullname) : ((courseMap[evCourseId] && courseMap[evCourseId].name) || '');
+              var modIdMatch = /\/mod\/(?:assign|quiz|vod|ubfile)\/view\.php\?id=(\d+)/.exec((ev.url || '') + ' ' + ((ev.action && ev.action.url) || ''));
+              addAsg({
+                externalId: modIdMatch ? ('lu-mod-' + modIdMatch[1]) : ('lu-ev-' + ev.id),
+                luCourseId: evCourseId,
+                courseName: evCourseName,
+                title: cleanText(ev.name || ev.activityname || ''),
+                due: ev.timestart ? tsToLocalIso(ev.timestart) : '',
+                url: (ev.action && ev.action.url) || ev.url || (evCourseId ? 'https://ys.learnus.org/course/view.php?id=' + evCourseId : ''),
+                submitted: false
+              });
+            }
+          } catch (e) {}
+
+          try {
+            var upRes = await fetch('https://ys.learnus.org/lib/ajax/service.php?sesskey=' + encodeURIComponent(sesskey) + '&info=core_calendar_get_calendar_upcoming_view', {
+              method: 'POST',
+              credentials: 'include',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify([{ index: 0, methodname: 'core_calendar_get_calendar_upcoming_view', args: { courseid: 1, categoryid: 0 } }])
+            });
+            var upJson = await upRes.json();
+            var uevs = (upJson && upJson[0] && upJson[0].data && upJson[0].data.events) || [];
+            for (var uIdx = 0; uIdx < uevs.length; uIdx++) {
+              var uev = uevs[uIdx];
+              var uCid = uev.course && uev.course.id ? String(uev.course.id) : '';
+              var uModMatch = /\/mod\/(?:assign|quiz|vod|ubfile)\/view\.php\?id=(\d+)/.exec((uev.viewurl || '') + ' ' + (uev.url || ''));
+              addAsg({
+                externalId: uModMatch ? ('lu-mod-' + uModMatch[1]) : ('lu-ev-' + uev.id),
+                luCourseId: uCid,
+                courseName: (uev.course && uev.course.fullname) ? cleanText(uev.course.fullname) : ((courseMap[uCid] && courseMap[uCid].name) || ''),
+                title: cleanText(uev.name || ''),
+                due: uev.timestart ? tsToLocalIso(uev.timestart) : '',
+                url: uev.url || uev.viewurl || (uCid ? 'https://ys.learnus.org/course/view.php?id=' + uCid : ''),
+                submitted: false
+              });
+            }
+          } catch (e) {}
+        }
+
+        try {
+          var calDoc = await fetchDoc('https://ys.learnus.org/calendar/view.php?view=upcoming');
+          var evNodes = calDoc.querySelectorAll('[data-type="event"], .event[data-event-id], .upcoming-event-list li, .cal_courses_flt');
+          for (var cIdx = 0; cIdx < evNodes.length; cIdx++) {
+            var node = evNodes[cIdx];
+            var eid = node.getAttribute('data-event-id') || '';
+            var tNode = node.querySelector('h3, .name, .event-title, a[href*="/mod/"]');
+            if (!tNode) continue;
+            var cLink = node.querySelector('a[href*="/course/view.php?id="]');
+            var mLink = node.querySelector('a[href*="/mod/"]');
+            var timeLink = node.querySelector('a[href*="time="]');
+            var nCid = '';
+            if (cLink) { try { nCid = new URL(cLink.getAttribute('href'), location.origin).searchParams.get('id') || ''; } catch (e) {} }
+            var dueIso = '';
+            if (timeLink) {
+              try {
+                var tsVal = new URL(timeLink.getAttribute('href'), location.origin).searchParams.get('time');
+                if (tsVal) dueIso = tsToLocalIso(tsVal);
+              } catch (e) {}
+            }
+            if (!dueIso) dueIso = parseDateStr(node.textContent, true);
+            var modHref = mLink ? new URL(mLink.getAttribute('href'), location.origin).href : '';
+            var mMatch = /\/mod\/[^/]+\/view\.php\?id=(\d+)/.exec(modHref);
+            addAsg({
+              externalId: mMatch ? ('lu-mod-' + mMatch[1]) : ('lu-calhtml-' + (eid || cIdx)),
+              luCourseId: nCid,
+              courseName: cLink ? cleanText(cLink.textContent) : ((courseMap[nCid] && courseMap[nCid].name) || ''),
+              title: cleanText(tNode.textContent),
+              due: dueIso,
+              url: modHref || (nCid ? 'https://ys.learnus.org/course/view.php?id=' + nCid : ''),
+              submitted: false
+            });
+          }
+        } catch (e) {}
+
+        /* 3) 강좌별 과제 제출 현황 및 공지사항 게시판 스캔 */
+        var ntcMap = {};
+        var cutoffPastSub = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 19);
+        var cutoffPastAll = new Date(Date.now() - 28 * 86400000).toISOString().slice(0, 19);
+
+        for (var ci = 0; ci < courses.length; ci++) {
+          var crs = courses[ci];
+          statusEl.textContent = '3/3 강좌별 과제·공지 확인 중 (' + (ci + 1) + '/' + courses.length + ') · ' + crs.name;
+
+          /* 3-A: 강좌 과제 목록 요약 페이지 (/mod/assign/index.php) */
+          try {
+            var asgDoc = await fetchDoc('https://ys.learnus.org/mod/assign/index.php?id=' + crs.luId);
+            var rows = asgDoc.querySelectorAll('table tbody tr');
+            for (var ri = 0; ri < rows.length; ri++) {
+              var tr = rows[ri];
+              var aLink = tr.querySelector('a[href*="/mod/assign/view.php?id="], a[href*="view.php?id="]');
+              if (!aLink) continue;
+              var aUrl = new URL(aLink.getAttribute('href'), 'https://ys.learnus.org/mod/assign/').href;
+              var modId = new URL(aUrl).searchParams.get('id') || '';
+              var rowTxt = cleanText(tr.textContent);
+              var isSub = /제출\s*완료|제출됨|Submitted\s*for\s*grading|채점\s*완료|Graded/i.test(rowTxt);
+              var tds = tr.querySelectorAll('td');
+              var dueFound = '';
+              for (var ti = 0; ti < tds.length; ti++) {
+                var cand = parseDateStr(tds[ti].textContent, true);
+                if (cand) dueFound = cand;
+              }
+              if (dueFound && isSub && dueFound < cutoffPastSub) continue;
+              if (dueFound && dueFound < cutoffPastAll) continue;
+              addAsg({
+                externalId: modId ? ('lu-mod-' + modId) : ('lu-asgrow-' + crs.luId + '-' + ri),
+                luCourseId: crs.luId,
+                courseName: crs.name,
+                title: cleanText(aLink.textContent),
+                due: dueFound,
+                url: aUrl,
+                submitted: isSub
+              });
+            }
+          } catch (e) {}
+
+          /* 3-B: 강좌 메인 페이지에서 공지사항 게시판 탐색 및 최신 공지 추출 */
+          try {
+            var cDoc = await fetchDoc(crs.url);
+            var boardLinks = cDoc.querySelectorAll('a[href*="/mod/ubboard/view.php?id="], a[href*="/mod/forum/view.php?id="]');
+            var targetBoards = [];
+            var fallbackBoard = null;
+            for (var bi = 0; bi < boardLinks.length; bi++) {
+              var bl = boardLinks[bi];
+              var bHref = new URL(bl.getAttribute('href'), location.origin).href;
+              if (targetBoards.indexOf(bHref) >= 0) continue;
+              var instEl = bl.querySelector('.instancename') || bl;
+              var bName = cleanText(instEl.textContent);
+              if (/공지|알림|안내|notice|announce|news/i.test(bName)) {
+                targetBoards.push(bHref);
+              } else if (!fallbackBoard && !/질의|질문|Q&A|자유|토론|팀|조별/i.test(bName)) {
+                fallbackBoard = bHref;
+              }
+            }
+            if (targetBoards.length === 0 && fallbackBoard) targetBoards.push(fallbackBoard);
+
+            for (var tbi = 0; tbi < Math.min(2, targetBoards.length); tbi++) {
+              var bUrl = targetBoards[tbi];
+              var bDoc = await fetchDoc(bUrl);
+              var bRows = bDoc.querySelectorAll('table tbody tr');
+              var countInBoard = 0;
+              for (var bri = 0; bri < bRows.length && countInBoard < 8; bri++) {
+                var btr = bRows[bri];
+                var artA = btr.querySelector('a[href*="article.php"], a[href*="discuss.php"]');
+                if (!artA) continue;
+                var artTitle = cleanText(artA.textContent).replace(/^NEW\s+/i, '').trim();
+                if (!artTitle || /등록된 게시물이 없습니다|게시글이 없습니다/i.test(artTitle)) continue;
+                var artHref = new URL(artA.getAttribute('href'), bUrl).href;
+                var artUrlObj = new URL(artHref);
+                var artId = artUrlObj.searchParams.get('bwid') || artUrlObj.searchParams.get('d') || String(bri);
+                var bCells = btr.querySelectorAll('td');
+                var firstCellTxt = bCells.length ? cleanText(bCells[0].textContent) : '';
+                var hasNoticeBadge = /공지|notice|중요|필독/i.test(firstCellTxt) || (bCells.length > 0 && !!bCells[0].querySelector('img, .badge, i') && !/^\d+$/.test(firstCellTxt));
+                var nDate = '';
+                for (var bci = bCells.length - 1; bci >= 0; bci--) {
+                  var dCand = parseDateStr(bCells[bci].textContent, false);
+                  if (dCand) { nDate = dCand; break; }
+                }
+                var nKey = 'lu-ntc-' + crs.luId + '-' + artId;
+                if (!ntcMap[nKey]) {
+                  ntcMap[nKey] = {
+                    externalId: nKey,
+                    luCourseId: crs.luId,
+                    courseName: crs.name,
+                    title: artTitle,
+                    date: nDate || new Date().toISOString().slice(0, 10),
+                    pinned: hasNoticeBadge,
+                    url: artHref
+                  };
+                  countInBoard++;
+                }
+              }
+            }
+          } catch (e) {}
+        }
+
+        var asgList = Object.keys(asgMap).map(function (k) { return asgMap[k]; });
+        var ntcList = Object.keys(ntcMap).map(function (k) { return ntcMap[k]; });
+        var payload = {
+          app: 'patent-study-home-learnus',
+          syncedAt: new Date().toISOString(),
+          courses: courses,
+          assignments: asgList,
+          notices: ntcList
+        };
+        var jsonStr = JSON.stringify(payload);
+        try { await navigator.clipboard.writeText(jsonStr); } catch (e) {}
+
+        var acked = false;
+        window.addEventListener('message', function (ev) {
+          if (ev.data && ev.data.type === 'STUDY_HOME_SYNC_ACK') {
+            acked = true;
+            statusEl.innerHTML = '<strong style="color:#1c6b4a">✅ 내 수험 공간에 자동 반영 완료!</strong><br>강좌 ' + courses.length + '개 · 과제/마감 ' + asgList.length + '건 · 공지 ' + ntcList.length + '건';
+          }
+        });
+
+        /* opener가 살아 있으면 즉시 자동 전송 */
+        if (window.opener && !window.opener.closed && TARGET_ORIGIN) {
+          try {
+            window.opener.postMessage({ type: 'STUDY_HOME_LEARNUS_SYNC', payload: payload }, TARGET_ORIGIN);
+          } catch (e) {}
+        }
+
+        statusEl.innerHTML = '수집 완료: <strong>강좌 ' + courses.length + '개 · 과제/마감 ' + asgList.length + '건 · 공지 ' + ntcList.length + '건</strong><br><span style="font-size:12px;color:#5c6b64">아래 버튼을 누르면 내 수험 공간으로 바로 전송됩니다.</span>';
+
+        var sendBtn = document.createElement('button');
+        sendBtn.textContent = '🚀 내 수험 공간으로 보내기';
+        sendBtn.style.cssText = 'padding:10px 14px;border:none;border-radius:9px;background:#234B3F;color:#fff;font-weight:700;cursor:pointer;font-size:14px';
+        sendBtn.onclick = function () {
+          var targetUrl = (TARGET_ORIGIN || 'https://study-space-2027.netlify.app') + '/#academic';
+          var w = (window.opener && !window.opener.closed) ? window.opener : window.open(targetUrl, 'study_home_sync_target');
+          if (!w) {
+            alert('팝업이 차단되었습니다. 아래 "데이터 복사" 버튼을 눌러 홈페이지의 붙여넣기 칸에 넣어 주세요.');
+            return;
+          }
+          try { w.focus(); } catch (e) {}
+          var tries = 0;
+          var iv = setInterval(function () {
+            tries++;
+            if (acked || tries > 18) { clearInterval(iv); return; }
+            try { w.postMessage({ type: 'STUDY_HOME_LEARNUS_SYNC', payload: payload }, TARGET_ORIGIN || '*'); } catch (e) {}
+          }, 350);
+        };
+
+        var copyBtn = document.createElement('button');
+        copyBtn.textContent = '📋 데이터 복사 (수동 붙여넣기용)';
+        copyBtn.style.cssText = 'padding:8px 12px;border:1px solid #cdd6d1;border-radius:8px;background:#f5f7f6;color:#234B3F;font-weight:600;cursor:pointer;font-size:12.5px';
+        copyBtn.onclick = async function () {
+          try {
+            await navigator.clipboard.writeText(jsonStr);
+            copyBtn.textContent = '✅ 복사 완료! 홈페이지 동기화 창에 붙여넣으세요';
+          } catch (e) {
+            window.prompt('아래 텍스트를 복사(Ctrl+C)하세요:', jsonStr);
+          }
+        };
+
+        var closeBtn = document.createElement('button');
+        closeBtn.textContent = '닫기';
+        closeBtn.style.cssText = 'padding:6px;border:none;background:transparent;color:#6c7a73;cursor:pointer;font-size:12px';
+        closeBtn.onclick = function () { box.remove(); };
+
+        actionWrap.appendChild(sendBtn);
+        actionWrap.appendChild(copyBtn);
+        actionWrap.appendChild(closeBtn);
+      } catch (err) {
+        statusEl.textContent = '오류가 발생했습니다: ' + (err && err.message ? err.message : String(err));
+      }
+    })();
+  }
+
+  function buildLearnUsSyncScript() {
+    const origin = (typeof window !== 'undefined' && window.location && /^https?:/.test(window.location.protocol))
+      ? window.location.origin
+      : 'https://study-space-2027.netlify.app';
+    return '(' + __learnUsCollectorMain.toString() + ')(' + JSON.stringify(origin) + ');';
+  }
+
+  function matchCourseForLearnUs(courses, luCourseId, courseName, codeHint) {
+    const norm = function (s) { return String(s || '').replace(/\s+/g, '').replace(/\(2학기\)|\[2학기\]/g, '').toLowerCase(); };
+    if (luCourseId) {
+      const byLu = courses.find(function (c) { return c.luId && String(c.luId) === String(luCourseId); });
+      if (byLu) return byLu;
+    }
+    const extractedCode = codeHint || ((/\(([A-Z]{2,4}\d{4})/.exec(courseName || '') || [])[1]) || '';
+    if (extractedCode) {
+      const prefix = extractedCode.slice(0, 7).toUpperCase();
+      const byCode = courses.find(function (c) { return c.code && c.code.toUpperCase().indexOf(prefix) === 0; });
+      if (byCode) return byCode;
+    }
+    const targetNorm = norm((courseName || '').replace(/\([A-Z]{2,4}\d{4}.*$/, ''));
+    if (targetNorm) {
+      const byName = courses.find(function (c) {
+        const cn = norm(c.name);
+        return cn && (cn === targetNorm || targetNorm.indexOf(cn) >= 0 || cn.indexOf(targetNorm) >= 0);
+      });
+      if (byName) return byName;
+      if (/공학물리/.test(targetNorm)) {
+        const phys = courses.find(function (c) { return /공학물리/.test(c.name); });
+        if (phys) return phys;
+      }
+    }
+    return null;
+  }
+
+  function applyLearnUsSyncPayload(payload) {
+    if (!payload || payload.app !== 'patent-study-home-learnus') {
+      throw new Error('올바른 LearnUs 동기화 데이터가 아닙니다.');
+    }
+    let addedAsg = 0, updatedAsg = 0, addedNtc = 0, matchedCrs = 0;
+
+    Store.update(function (dd) {
+      if (!Array.isArray(dd.courses)) dd.courses = [];
+      if (!Array.isArray(dd.assignments)) dd.assignments = [];
+      if (!Array.isArray(dd.notices)) dd.notices = [];
+
+      /* 1) 강좌 매칭 및 링크·학습률 업데이트 (신규 정규 교과목이면 추가) */
+      (payload.courses || []).forEach(function (lc) {
+        const found = matchCourseForLearnUs(dd.courses, lc.luId, lc.fullTitle || lc.name, lc.code);
+        if (found) {
+          if (!/실험실/.test(lc.name || '') || !found.luId) found.luId = lc.luId;
+          if (lc.url && (!found.link || found.link.indexOf('learnus.org') >= 0)) found.link = lc.url;
+          if (lc.progressPct != null && !/실험실/.test(lc.name || '')) found.progressPct = lc.progressPct;
+          if (lc.code && !found.code) found.code = lc.code;
+          matchedCrs++;
+        } else if (!lc.isNonCredit && lc.name && !/실험실/.test(lc.name)) {
+          dd.courses.push({
+            id: 'course-lu-' + lc.luId,
+            luId: lc.luId,
+            code: lc.code || '',
+            name: lc.name,
+            semester: '2026-2',
+            credits: 3,
+            room: '',
+            link: lc.url || '',
+            progressPct: lc.progressPct,
+            schedule: [],
+          });
+          matchedCrs++;
+        }
+      });
+
+      /* 초기 임시 시드 마감 항목은 실제 LearnUs 일정이 들어오면 중복 방지를 위해 정리 */
+      if ((payload.assignments || []).length > 0) {
+        dd.assignments = dd.assignments.filter(function (a) {
+          return a.id !== 'lu-init-semi-ch5' && a.id !== 'lu-init-chapel-w9';
+        });
+      }
+
+      /* 2) 과제 및 동영상 마감 병합 */
+      (payload.assignments || []).forEach(function (la) {
+        if (!la || !la.title) return;
+        const matched = matchCourseForLearnUs(dd.courses, la.luCourseId, la.courseName, '');
+        const cleanCourseName = matched ? matched.name : String(la.courseName || '').replace(/\s*\([A-Z]{2,4}\d{4}.*$/, '').trim();
+        const ex = dd.assignments.find(function (a) {
+          return (la.externalId && a.externalId === la.externalId)
+            || (a.title === la.title && ((matched && a.courseId === matched.id) || a.courseName === cleanCourseName));
+        });
+        if (ex) {
+          if (la.due) ex.due = la.due;
+          if (la.url) ex.link = la.url;
+          if (matched && !ex.courseId) ex.courseId = matched.id;
+          if (cleanCourseName) ex.courseName = cleanCourseName;
+          if (la.submitted) { ex.submitted = true; ex.written = true; }
+          updatedAsg++;
+        } else {
+          dd.assignments.push({
+            id: Store.id('asg'),
+            externalId: la.externalId || '',
+            title: la.title,
+            courseId: matched ? matched.id : '',
+            courseName: cleanCourseName,
+            due: la.due || '',
+            estMin: /동영상/.test(la.title) ? 45 : 90,
+            link: la.url || '',
+            written: !!la.submitted,
+            submitted: !!la.submitted,
+          });
+          addedAsg++;
+        }
+      });
+
+      /* 3) 공지사항 병합 (읽음 상태 보존) */
+      (payload.notices || []).forEach(function (ln) {
+        if (!ln || !ln.title) return;
+        const matched = matchCourseForLearnUs(dd.courses, ln.luCourseId, ln.courseName, '');
+        const cleanCourseName = matched ? matched.name : String(ln.courseName || '').replace(/\s*\([A-Z]{2,4}\d{4}.*$/, '').trim();
+        const imp = isImportantNoticeTitle(ln.title, ln.pinned);
+        const ex = dd.notices.find(function (n) {
+          return (ln.externalId && n.externalId === ln.externalId)
+            || (n.title === ln.title && ((matched && n.courseId === matched.id) || n.courseName === cleanCourseName));
+        });
+        if (ex) {
+          if (ln.date) ex.date = ln.date;
+          if (ln.url) ex.url = ln.url;
+          if (imp) ex.important = true;
+        } else {
+          dd.notices.push({
+            id: Store.id('ntc'),
+            externalId: ln.externalId || '',
+            courseId: matched ? matched.id : '',
+            courseName: cleanCourseName,
+            title: ln.title,
+            date: ln.date || todayKey(),
+            important: imp,
+            read: false,
+            url: ln.url || '',
+            body: '',
+          });
+          addedNtc++;
+        }
+      });
+
+      dd.settings.lastLearnUsSyncAt = payload.syncedAt || new Date().toISOString();
+    });
+
+    return { courses: matchedCrs, addedAsg: addedAsg, updatedAsg: updatedAsg, addedNtc: addedNtc };
+  }
+
+  function openLearnUsSyncModal(ctx) {
+    const code = buildLearnUsSyncScript();
+    const bookmarkletHref = 'javascript:' + encodeURIComponent(code);
+
+    const dragLink = el('a', {
+      href: bookmarkletHref,
+      class: 'btn btn-primary',
+      style: 'text-decoration:none;cursor:grab;font-weight:800',
+      onclick: function (e) {
+        e.preventDefault();
+        ctx.toast('이 버튼은 클릭 대신 마우스로 끌어서 브라우저 상단 "즐겨찾기 모음(북마크 바)"에 올려두세요!', 'warn', 4500);
+      },
+    }, '📥 LearnUs 수험공간 동기화');
+
+    const copyScriptBtn = el('button', {
+      class: 'btn',
+      onclick: async function () {
+        try {
+          await navigator.clipboard.writeText(code);
+          ctx.toast('동기화 코드를 복사했습니다. LearnUs 탭에서 F12 → Console에 붙여넣고 Enter를 누르세요.');
+        } catch (e) {
+          ctx.toast('복사에 실패했습니다. 북마크 드래그 방식을 이용해 주세요.', 'warn');
+        }
+      },
+    }, '📋 코드 복사 (F12 콘솔용)');
+
+    const openLuBtn = el('button', {
+      class: 'btn',
+      onclick: function () {
+        window.open('https://ys.learnus.org/', 'learnus_sync_win');
+      },
+    }, '1. LearnUs 열기 ↗');
+
+    const pasteArea = el('textarea', { rows: '3', placeholder: '자동 전송이 차단된 경우에만 LearnUs에서 복사한 데이터를 여기에 붙여넣으세요.' });
+    const pasteBtn = el('button', {
+      class: 'btn btn-primary btn-sm',
+      style: 'margin-top:6px',
+      onclick: function () {
+        const raw = pasteArea.value.trim();
+        if (!raw) { ctx.toast('붙여넣을 데이터가 없습니다.', 'warn'); return; }
+        try {
+          const res = applyLearnUsSyncPayload(JSON.parse(raw));
+          m.close();
+          acadTab = res.addedNtc > 0 && res.addedAsg === 0 ? 'notices' : 'assignments';
+          ctx.navigate('academic');
+          ctx.toast('동기화 완료! 과제 신규 ' + res.addedAsg + '건(갱신 ' + res.updatedAsg + '건) · 새 공지 ' + res.addedNtc + '건 반영');
+        } catch (e) {
+          ctx.toast('데이터 형식이 올바르지 않습니다: ' + e.message, 'warn');
+        }
+      },
+    }, '붙여넣은 데이터 반영');
+
+    const body = el('div', { class: 'stack', style: 'gap:12px' }, [
+      el('div', { class: 'card', style: 'background:var(--exam-bg);border-color:var(--border)' }, [
+        el('div', { style: 'font-weight:700;color:var(--exam-fg);margin-bottom:4px' }, '🔒 아이디·비밀번호 입력이 필요 없습니다'),
+        el('p', { class: 'hint', style: 'margin:0;color:var(--text)' }, '연세포털 비밀번호를 외부에 맡기지 않고, 본인 브라우저에 이미 로그인된 LearnUs 화면에서 과제·동영상 마감·공지사항만 안전하게 읽어옵니다.'),
+      ]),
+      el('div', { class: 'card' }, [
+        el('div', { style: 'font-weight:700;margin-bottom:8px' }, '방법 A · 북마크 바 1클릭 연동 (추천 · 매주 1초 실행)'),
+        el('ol', { style: 'margin:0 0 12px;padding-left:20px;font-size:.9rem;line-height:1.8;color:var(--text-sub)' }, [
+          el('li', {}, '아래 초록색 "📥 LearnUs 수험공간 동기화" 버튼을 마우스로 끌어 브라우저 상단 즐겨찾기(북마크) 바에 올려둡니다. (최초 1회)'),
+          el('li', {}, '"1. LearnUs 열기 ↗"로 로그인된 https://ys.learnus.org 화면을 엽니다.'),
+          el('li', {}, 'LearnUs 화면에서 방금 등록한 즐겨찾기 버튼을 누르면 모든 강좌의 과제·공지가 이 홈페이지로 자동 전송됩니다!'),
+        ]),
+        el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [dragLink, openLuBtn]),
+      ]),
+      el('details', { class: 'card' }, [
+        el('summary', { style: 'cursor:pointer;font-weight:700;font-size:.9rem' }, '방법 B · 북마크 등록 없이 지금 한 번만 실행하기 (F12 콘솔 / 수동 붙여넣기)'),
+        el('div', { style: 'margin-top:10px;display:flex;flex-direction:column;gap:8px' }, [
+          el('p', { class: 'hint', style: 'margin:0' }, '① 아래 "코드 복사" 클릭 → ② LearnUs 탭에서 F12 키 → Console 탭에 붙여넣고 Enter! (만약 Console에 붙여넣기 경고가 뜨면 allow pasting 입력 후 Enter)'),
+          el('div', { class: 'row', style: 'gap:8px' }, [copyScriptBtn, openLuBtn.cloneNode(true)]),
+          el('div', { style: 'margin-top:6px' }, [pasteArea, pasteBtn]),
+        ]),
+      ]),
+    ]);
+    body.querySelectorAll('button').forEach(function (b) {
+      if (b.textContent === '1. LearnUs 열기 ↗' && !b.onclick) {
+        b.onclick = function () { window.open('https://ys.learnus.org/', 'learnus_sync_win'); };
+      }
+    });
+
+    const m = ctx.modal({
+      title: 'LearnUs 과제 · 중요 공지 자동 동기화',
+      body: body,
+      footer: [el('button', { class: 'btn', onclick: function () { m.close(); } }, '닫기')],
+      onClose: function () { if (_activeLearnUsModal === m) _activeLearnUsModal = null; },
+    });
+    _activeLearnUsModal = m;
+  }
+
+  function setupLearnUsBridge() {
+    window.addEventListener('message', function (e) {
+      if (!e || !e.origin || !/^https:\/\/([a-z0-9-]+\.)?learnus\.org$/i.test(e.origin)) return;
+      const msg = e.data;
+      if (!msg || msg.type !== 'STUDY_HOME_LEARNUS_SYNC' || !msg.payload) return;
+      try {
+        const res = applyLearnUsSyncPayload(msg.payload);
+        if (e.source && typeof e.source.postMessage === 'function') {
+          e.source.postMessage({ type: 'STUDY_HOME_SYNC_ACK' }, e.origin);
+        }
+        if (_activeLearnUsModal) { _activeLearnUsModal.close(); _activeLearnUsModal = null; }
+        acadTab = (res.addedAsg > 0) ? 'assignments' : (res.addedNtc > 0 ? 'notices' : acadTab);
+        navigate('academic');
+        toast('LearnUs 동기화 완료! 과제 신규 ' + res.addedAsg + '건(갱신 ' + res.updatedAsg + '건) · 공지 ' + res.addedNtc + '건 반영', 'ok', 5000);
+      } catch (err) {
+        console.error('LearnUs 수신 오류', err);
+        toast('LearnUs 동기화 처리 중 오류: ' + err.message, 'warn');
+      }
+    });
   }
   function renderAttendance(root, ctx) {
     const d = Store.data();
@@ -2820,8 +3772,10 @@
       d.tasks.forEach(function (t) { if (t.title.toLowerCase().indexOf(q) >= 0) hits.push({ type: '과업', title: t.title, route: 'tasks' }); });
       d.answers.forEach(function (a) { if ((a.source + ' ' + a.note).toLowerCase().indexOf(q) >= 0) hits.push({ type: '답안', title: a.source + ' ' + (a.round || ''), route: 'answers' }); });
       d.cards.forEach(function (c) { if ((c.q + ' ' + c.a).toLowerCase().indexOf(q) >= 0) hits.push({ type: '카드', title: c.q, route: 'review' }); });
+      (d.assignments || []).forEach(function (a) { if ((a.title + ' ' + (a.courseName || '')).toLowerCase().indexOf(q) >= 0) hits.push({ type: '학업과제', title: a.title, route: 'academic', tab: 'assignments' }); });
+      (d.notices || []).forEach(function (n) { if ((n.title + ' ' + (n.courseName || '') + ' ' + (n.body || '')).toLowerCase().indexOf(q) >= 0) hits.push({ type: '학업공지', title: n.title, route: 'academic', tab: 'notices' }); });
       if (hits.length === 0) { results.append(el('p', { class: 'hint' }, '결과가 없습니다.')); return; }
-      hits.slice(0, 30).forEach(function (h) { results.append(el('button', { class: 'item', style: 'width:100%;text-align:left;cursor:pointer', onclick: function () { m.close(); if (h.route === 'notes' && h.id) { noteSelectedId = h.id; Store.update(function (dd) { dd.lastOpenNote = h.id; }); } navigate(h.route); } }, [el('span', { class: 'tag tag-muted' }, h.type), el('div', { class: 'main' }, el('div', { class: 'title' }, h.title || '(제목 없음)'))])); });
+      hits.slice(0, 30).forEach(function (h) { results.append(el('button', { class: 'item', style: 'width:100%;text-align:left;cursor:pointer', onclick: function () { m.close(); if (h.route === 'notes' && h.id) { noteSelectedId = h.id; Store.update(function (dd) { dd.lastOpenNote = h.id; }); } if (h.route === 'academic' && h.tab) { acadTab = h.tab; } navigate(h.route); } }, [el('span', { class: 'tag tag-muted' }, h.type), el('div', { class: 'main' }, el('div', { class: 'title' }, h.title || '(제목 없음)'))])); });
     }
     input.oninput = function () { run(input.value); };
     run(query);
@@ -2929,6 +3883,7 @@
       }
     });
     maybeOnboard();
+    setupLearnUsBridge();
     setupCloud();
   }
 
