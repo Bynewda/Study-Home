@@ -39,6 +39,7 @@ async function saveAndBroadcastPayload(payload) {
     var homeTabs = await chrome.tabs.query({
       url: [
         'https://study-space-2027.netlify.app/*',
+        'https://bynewda.github.io/Study-Home/*',
         'http://localhost/*',
         'http://127.0.0.1/*'
       ]

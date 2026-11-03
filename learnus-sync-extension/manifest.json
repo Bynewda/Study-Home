@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "나의 수험 공간 · LearnUs 자동 동기화",
-  "version": "1.1.0",
-  "description": "비밀번호 입력 없이 LearnUs 접속 시 및 수험 공간 열람 시 수강 과목·과제 마감·중요 공지를 백그라운드에서 자동 동기화합니다.",
+  "name": "논결(NONGYEOL) · LearnUs 자동 동기화",
+  "version": "1.1.1",
+  "description": "비밀번호 입력 없이 LearnUs 접속 시 및 논결(변리사 2차 수험실) 열람 시 수강 과목·과제 마감·중요 공지를 백그라운드에서 자동 동기화합니다.",
   "permissions": [
     "tabs",
     "scripting",
@@ -11,6 +11,7 @@
   "host_permissions": [
     "https://*.learnus.org/*",
     "https://study-space-2027.netlify.app/*",
+    "https://bynewda.github.io/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
@@ -21,6 +22,7 @@
     {
       "matches": [
         "https://study-space-2027.netlify.app/*",
+        "https://bynewda.github.io/Study-Home/*",
         "http://localhost/*",
         "http://127.0.0.1/*"
       ],

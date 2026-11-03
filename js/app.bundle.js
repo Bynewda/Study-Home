@@ -1401,7 +1401,7 @@
       el('button', { class: 'section-link', style: 'color:var(--acad-fg)', onclick: function () { ctx.navigate('academic'); } }, '전체 →'),
     ]));
     const upcoming = upcomingAssignments(d);
-    const unreadImpNotices = (d.notices || []).filter(function (n) { return !n.read && n.important; });
+    const unreadImpNotices = (d.notices || []).filter(function (n) { return !n.archived && !n.read && n.important; });
     if (upcoming.length === 0 && unreadImpNotices.length === 0) {
       acadCard.append(el('p', { class: 'hint', style: 'color:var(--acad-fg)' }, '7일 내 임박한 과제 마감이나 미확인 중요 공지가 없습니다.'));
     } else {
@@ -1859,7 +1859,7 @@
   }
   function upcomingAssignments(d) {
     const horizon = toLocalIso(addDays(new Date(), 7));
-    return d.assignments.filter(function (a) { return !a.submitted && a.due && a.due <= horizon; }).sort(function (a, b) { return (a.due || '').localeCompare(b.due || ''); });
+    return d.assignments.filter(function (a) { return !a.archived && !a.submitted && a.due && a.due <= horizon; }).sort(function (a, b) { return (a.due || '').localeCompare(b.due || ''); });
   }
   function metricCard(label, value, sub, onClick) {
     const card = el('div', { class: 'metric', role: onClick ? 'button' : null, tabindex: onClick ? '0' : null, style: onClick ? 'cursor:pointer' : '' });
@@ -2894,56 +2894,114 @@
   }
 
   // 실전 답안 작성 모드: 타이머 + 문제·목차 작성 (우측 AI 및 노트 단서 숨김 — 제안서 10·11쪽)
+  // 보고서 P1: 작성 초안 자동 임시저장·복구, 닫기 전 경고, 타이머 0 도달 시 자동 일시정지 + 초과 작성 선택.
+  const EXAM_DRAFT_KEY = 'patent-study-home:exam-draft:v1';
   function openExamSimMode(ctx) {
     const d = Store.data();
     document.body.classList.add('exam-sim-active');
     let simTick = null;
     let remainSec = 60 * 60;
     let started = false;
+    let overtime = false;      // 0 도달 후 초과 작성 모드
+    let savedHandled = false;  // 종료(채점 전환/복구삭제)로 정상 마무리 여부
+
+    let recovered = null;
+    try { recovered = JSON.parse(localStorage.getItem(EXAM_DRAFT_KEY) || 'null'); } catch (e) {}
 
     const subjSel = el('select', {});
-    d.subjects.forEach(function (s) { subjSel.append(el('option', { value: s.id }, s.name)); });
-    const sourceInput = el('input', { type: 'text', placeholder: '출처·회차 (예: GS 3순환 2회)' });
-    const issueInput = el('input', { type: 'text', placeholder: '문항 주제 (선택)' });
+    d.subjects.forEach(function (s) { subjSel.append(el('option', { value: s.id, selected: recovered && recovered.subjectId === s.id }, s.name)); });
+    const sourceInput = el('input', { type: 'text', value: (recovered && recovered.source) || '', placeholder: '출처·회차 (예: GS 3순환 2회)' });
+    const issueInput = el('input', { type: 'text', value: (recovered && recovered.issue) || '', placeholder: '문항 주제 (선택)' });
     const minSel = el('select', {});
     [[30, '30분 (단문·약술)'], [60, '60분 (1문항 집중)'], [120, '120분 (실전 전범위)']].forEach(function (p) {
-      minSel.append(el('option', { value: String(p[0]), selected: p[0] === 60 }, p[1]));
+      minSel.append(el('option', { value: String(p[0]), selected: p[0] === ((recovered && recovered.timeLimit) || 60) }, p[1]));
     });
+    if (recovered && recovered.timeLimit) remainSec = recovered.timeLimit * 60;
     minSel.onchange = function () {
-      if (!started) {
-        remainSec = Number(minSel.value) * 60;
-        updateClock();
-      }
+      if (!started) { remainSec = Number(minSel.value) * 60; overtime = false; updateClock(); }
     };
 
     const clockEl = el('div', { style: 'font-family:var(--font-serif);font-size:2.3rem;font-weight:700;font-variant-numeric:tabular-nums;color:var(--accent)' }, '60:00');
+    const saveNote = el('div', { class: 'hint', style: 'margin-top:2px' }, '');
     const toggleTimerBtn = el('button', { type: 'button', class: 'btn btn-primary btn-sm' }, '▶ 타이머 시작');
     function updateClock() {
-      const m = String(Math.floor(Math.max(0, remainSec) / 60)).padStart(2, '0');
-      const s = String(Math.max(0, remainSec) % 60).padStart(2, '0');
+      const abs = Math.abs(remainSec);
+      const m = String(Math.floor(abs / 60)).padStart(2, '0');
+      const s = String(abs % 60).padStart(2, '0');
       clockEl.textContent = (remainSec < 0 ? '+' : '') + m + ':' + s;
+      clockEl.style.color = remainSec < 0 ? 'var(--terracotta)' : 'var(--accent)';
     }
+    function stopTick() { if (simTick) { clearInterval(simTick); simTick = null; } }
     toggleTimerBtn.onclick = function () {
       if (simTick) {
-        clearInterval(simTick); simTick = null;
+        stopTick();
         toggleTimerBtn.textContent = '▶ 계속';
       } else {
         started = true;
         toggleTimerBtn.textContent = '일시정지';
-        simTick = setInterval(function () { remainSec--; updateClock(); }, 1000);
+        simTick = setInterval(function () {
+          remainSec--;
+          if (remainSec === 0 && !overtime) {
+            stopTick();
+            toggleTimerBtn.textContent = '▶ 계속';
+            updateClock();
+            const tm = ctx.modal({
+              title: '제한 시간 종료',
+              body: el('div', {}, [
+                el('p', {}, '설정한 ' + (Number(minSel.value) || 60) + '분이 끝났습니다. 실전처럼 여기서 마무리하거나, 초과 시간을 기록하며 계속 작성할 수 있어요.'),
+                el('p', { class: 'hint' }, '작성한 초안은 자동 임시 저장되어 있습니다.'),
+              ]),
+              footer: [
+                el('button', { class: 'btn btn-primary', onclick: function () {
+                  tm.close(); overtime = true; toggleTimerBtn.textContent = '일시정지';
+                  simTick = setInterval(function () { remainSec--; updateClock(); autosave(); }, 1000);
+                } }, '초과 작성 계속 (+시간 기록)'),
+                el('button', { class: 'btn', onclick: function () { tm.close(); } }, '여기서 멈춤'),
+              ],
+            });
+          }
+          updateClock();
+          autosave();
+        }, 1000);
       }
     };
 
     const outlineArea = el('textarea', {
       style: 'min-height:220px;font-size:1rem;line-height:1.8',
       placeholder: '실전 목차 및 핵심 논거를 작성하세요.\n(실전 모드 중에는 AI 도우미와 노트 힌트가 숨겨집니다.)',
-    });
+    }, (recovered && recovered.draftOutline) || '');
+
+    let saveTimer = null;
+    function autosave() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () {
+        try {
+          localStorage.setItem(EXAM_DRAFT_KEY, JSON.stringify({
+            subjectId: subjSel.value, source: sourceInput.value, issue: issueInput.value,
+            timeLimit: Number(minSel.value) || 60, draftOutline: outlineArea.value,
+            savedAt: new Date().toISOString(),
+          }));
+          saveNote.textContent = '임시 저장됨 ' + new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+        } catch (e) {}
+      }, 400);
+    }
+    [outlineArea, sourceInput, issueInput].forEach(function (inp) { inp.addEventListener('input', autosave); });
+    function clearDraft() { try { localStorage.removeItem(EXAM_DRAFT_KEY); } catch (e) {} }
+
+    const recoverBanner = recovered
+      ? el('div', { class: 'card', style: 'background:var(--warn-bg);border-color:var(--warn-fg);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap' }, [
+          el('div', {}, [el('strong', { style: 'color:var(--warn-fg)' }, '이전에 작성하던 초안을 복구했습니다'), el('div', { class: 'hint' }, (recovered.savedAt ? '마지막 저장 ' + new Date(recovered.savedAt).toLocaleString('ko-KR') : ''))]),
+          el('button', { class: 'btn btn-sm', onclick: function () { if (recoverBanner && recoverBanner.remove) recoverBanner.remove(); outlineArea.value = ''; sourceInput.value = ''; issueInput.value = ''; clearDraft(); saveNote.textContent = ''; } }, '새로 시작 (초안 비우기)'),
+        ])
+      : null;
 
     const body = el('div', { class: 'stack' }, [
+      recoverBanner,
       el('div', { class: 'card', style: 'background:var(--exam-bg);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap' }, [
         el('div', {}, [
           el('div', { style: 'font-size:.76rem;font-weight:700;color:var(--exam-fg)' }, '실전 답안 작성 모드 · AI/노트 단서 차단됨'),
           clockEl,
+          saveNote,
         ]),
         el('div', { class: 'row', style: 'gap:8px' }, [minSel, toggleTimerBtn]),
       ]),
@@ -2954,10 +3012,28 @@
       el('div', { class: 'field', style: 'margin:0' }, [el('label', {}, '대상 쟁점'), issueInput]),
       el('div', { class: 'field', style: 'margin:0' }, [el('label', {}, '실전 목차 · 답안 초안'), outlineArea]),
     ]);
+    updateClock();
+    if (recovered) autosave();
 
     function cleanupSim() {
-      if (simTick) { clearInterval(simTick); simTick = null; }
+      stopTick();
+      clearTimeout(saveTimer);
       document.body.classList.remove('exam-sim-active');
+    }
+    function requestClose() {
+      if (!savedHandled && outlineArea.value.trim()) {
+        const cm = ctx.modal({
+          title: '작성 중인 답안이 있습니다',
+          body: el('p', {}, '지금 닫아도 초안은 임시 저장되어 다음에 복구할 수 있습니다. 어떻게 할까요?'),
+          footer: [
+            el('button', { class: 'btn', onclick: function () { cm.close(); } }, '계속 작성'),
+            el('button', { class: 'btn', onclick: function () { cm.close(); savedHandled = true; m.close(); } }, '임시 저장 후 닫기'),
+            el('button', { class: 'btn btn-danger', onclick: function () { cm.close(); clearDraft(); savedHandled = true; m.close(); } }, '초안 버리고 닫기'),
+          ],
+        });
+        return false;
+      }
+      return true;
     }
 
     const m = ctx.modal({
@@ -2965,10 +3041,12 @@
       body: body,
       onClose: cleanupSim,
       footer: [
-        el('button', { class: 'btn', onclick: function () { m.close(); } }, '취소'),
+        el('button', { class: 'btn', onclick: function () { if (requestClose()) m.close(); } }, '닫기'),
         el('button', {
           class: 'btn btn-primary',
           onclick: function () {
+            const baseSec = (Number(minSel.value) || 60) * 60;
+            const overSec = remainSec < 0 ? -remainSec : 0;
             const draft = {
               id: null,
               subjectId: subjSel.value,
@@ -2981,9 +3059,11 @@
               errors: [],
               issue: issueInput.value.trim(),
               draftOutline: outlineArea.value,
-              note: '',
+              note: overSec > 0 ? ('[실전] 제한 ' + fmtMin(baseSec / 60) + ' 초과 ' + fmtMin(overSec / 60) + ' 작성') : '',
               rewriteOf: null,
             };
+            savedHandled = true;
+            clearDraft();
             m.close();
             openAnswerEditor(draft, ctx);
           },
@@ -4027,6 +4107,8 @@
      ======================================================================= */
   let acadTab = 'courses';
   let noticeOnlyImportant = false;
+  let assignmentShowArchived = false; // 보고서 P0: 보관(지난·완료) 과제 보기 토글
+  let noticeShowArchived = false;     // 보고서 P0: 보관 공지 보기 토글
   let _activeLearnUsModal = null;
 
   function assignmentDueTime(due) {
@@ -4058,13 +4140,20 @@
     assignmentCompletionKeys(assignment).forEach(function (key) { completed[key] = true; });
   }
 
+  // 컨설팅 보고서(P0): 지난·완료 과제를 '삭제'하지 않고 '보관(archived)'으로 전환해 기록을 보존한다.
+  // 목록은 보관 상태를 기본으로 숨기되, 보관함에서 언제든 열람·복원할 수 있다. 영구 삭제는 사용자 확인 시에만.
   function pruneFinishedAssignments(data, referenceTime) {
-    const before = (data.assignments || []).length;
-    data.assignments = (data.assignments || []).filter(function (assignment) {
+    let newlyArchived = 0;
+    (data.assignments || []).forEach(function (assignment) {
       if (assignment.submitted) rememberSubmittedAssignment(data, assignment);
-      return !isFinishedAssignment(assignment, referenceTime, data.settings.completedAssignmentKeys || {});
+      if (!assignment.archived && isFinishedAssignment(assignment, referenceTime, data.settings.completedAssignmentKeys || {})) {
+        assignment.archived = true;
+        if (!assignment.archivedAt) assignment.archivedAt = new Date(referenceTime).toISOString();
+        assignment.archivedReason = assignment.submitted ? 'submitted' : 'overdue';
+        newlyArchived++;
+      }
     });
-    return before - data.assignments.length;
+    return newlyArchived;
   }
 
   function noticeDateTime(date) {
@@ -4072,12 +4161,18 @@
     return Date.parse(value || '');
   }
 
+  // 컨설팅 보고서(P0): 7일 지난 공지를 '삭제'하지 않고 '보관'으로 전환. 중요·고정 공지는 보관하지 않고 계속 노출.
   function pruneExpiredNotices(data, referenceTime) {
     const cutoff = referenceTime - 7 * 24 * 60 * 60 * 1000;
-    data.notices = (data.notices || []).filter(function (notice) {
-      const postedAt = noticeDateTime(notice && notice.date);
-      // 날짜를 확인할 수 없는 기록은 오래됐다고 단정해 삭제하지 않는다.
-      return !Number.isFinite(postedAt) || postedAt > cutoff;
+    (data.notices || []).forEach(function (notice) {
+      if (!notice || notice.archived) return;
+      if (notice.important || notice.pinned) return;      // 중요·고정 공지는 항상 유지
+      const postedAt = noticeDateTime(notice.date);
+      // 날짜를 확인할 수 없는 기록은 오래됐다고 단정하지 않는다.
+      if (Number.isFinite(postedAt) && postedAt <= cutoff) {
+        notice.archived = true;
+        if (!notice.archivedAt) notice.archivedAt = new Date(referenceTime).toISOString();
+      }
     });
   }
 
@@ -4243,15 +4338,19 @@
 
   function renderAssignments(root, ctx) {
     const d = Store.data();
+    const activeAsg = (d.assignments || []).filter(function (a) { return !a.archived; });
+    const archivedAsg = (d.assignments || []).filter(function (a) { return a.archived; });
+    const showing = assignmentShowArchived ? archivedAsg : activeAsg;
     root.append(el('div', { class: 'section-head' }, [
-      el('h2', {}, '과제·할일 ' + d.assignments.length + '개'),
-      el('div', { class: 'row', style: 'gap:8px' }, [
+      el('h2', {}, (assignmentShowArchived ? '보관 과제 ' : '과제·할일 ') + showing.length + '개'),
+      el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
+        archivedAsg.length ? el('button', { class: 'btn btn-sm' + (assignmentShowArchived ? ' btn-primary' : ''), onclick: function () { assignmentShowArchived = !assignmentShowArchived; ctx.refresh(); } }, assignmentShowArchived ? '진행 과제 보기' : '보관함 (' + archivedAsg.length + ')') : null,
         el('button', { class: 'btn btn-sm', onclick: function () { triggerLearnUsSync(ctx); } }, '🔄 LearnUs 불러오기'),
         el('button', { class: 'btn btn-primary', onclick: function () { openAssignmentEditor(null, ctx); } }, '+ 과제 추가'),
       ]),
     ]));
-    root.append(el('p', { class: 'hint', style: 'margin-top:-8px;margin-bottom:16px' }, '마감이 지났거나 제출 완료된 과제는 자동 삭제됩니다. 작성 완료만으로는 삭제되지 않으며, 학교 시스템에 자동 제출하지 않습니다.'));
-    if (d.assignments.length === 0) {
+    root.append(el('p', { class: 'hint', style: 'margin-top:-8px;margin-bottom:16px' }, '마감이 지났거나 제출 완료된 과제는 삭제되지 않고 보관함으로 이동해 기록이 보존됩니다. 영구 삭제는 편집 창에서 직접 확인 후에만 됩니다. 학교 시스템에 자동 제출하지 않습니다.'));
+    if ((d.assignments || []).length === 0) {
       root.append(el('div', { class: 'empty' }, [
         el('span', { class: 'emoji' }, '📨'),
         el('h3', {}, '등록된 과제가 없습니다'),
@@ -4259,8 +4358,12 @@
       ]));
       return;
     }
+    if (showing.length === 0) {
+      root.append(el('p', { class: 'hint' }, assignmentShowArchived ? '보관된 과제가 없습니다.' : '진행 중인 과제가 없습니다. 보관함을 확인해 보세요.'));
+      return;
+    }
     const nowLocal = toLocalIso(new Date());
-    const sorted = d.assignments.slice().sort(function (a, b) {
+    const sorted = showing.slice().sort(function (a, b) {
       if (!!a.submitted !== !!b.submitted) return a.submitted ? 1 : -1;
       return (a.due || '9999').localeCompare(b.due || '9999');
     });
@@ -4270,11 +4373,22 @@
       const courseLabel = (course && course.name) || a.courseName || '';
       const overdue = !a.submitted && a.due && a.due < nowLocal;
       const dueStr = a.due ? (fmtDate(a.due) + (a.due.length >= 16 ? ' ' + a.due.slice(11, 16) : '')) : '마감 없음';
+      const actions = [];
+      if (a.archived) {
+        actions.push(el('button', { class: 'btn btn-sm', onclick: function () { Store.update(function (dd) { const x = dd.assignments.find(function (z) { return z.id === a.id; }); if (x) { x.archived = false; x.archivedAt = null; } }); ctx.refresh(); ctx.toast('진행 과제로 되돌렸습니다.'); } }, '복원'));
+      } else {
+        actions.push(
+          el('button', { class: 'btn btn-sm' + (a.written ? ' btn-primary' : ''), onclick: function () { Store.update(function (dd) { const x = dd.assignments.find(function (z) { return z.id === a.id; }); x.written = !x.written; }); ctx.refresh(); } }, a.written ? '작성✓' : '작성'),
+          el('button', { class: 'btn btn-sm' + (a.submitted ? ' btn-primary' : ''), onclick: function () { Store.update(function (dd) { const x = dd.assignments.find(function (z) { return z.id === a.id; }); x.submitted = !x.submitted; x.submittedAt = x.submitted ? new Date().toISOString() : null; }); ctx.refresh(); } }, a.submitted ? '제출✓' : '제출 확인'),
+        );
+      }
+      if (a.link) actions.push(el('a', { href: a.link, target: '_blank', rel: 'noopener noreferrer', class: 'btn btn-sm' }, '열기 ↗'));
       const item = el('div', { class: 'item' + (a.submitted ? ' done' : '') }, [
         el('div', { class: 'main', style: 'cursor:pointer', onclick: function () { openAssignmentEditor(a, ctx); } }, [
           el('div', { class: 'row', style: 'gap:6px;align-items:center;flex-wrap:wrap' }, [
             courseLabel ? el('span', { class: 'tag tag-acad' }, courseLabel) : null,
             overdue ? el('span', { class: 'tag tag-warn' }, '마감 지남') : null,
+            a.archived ? el('span', { class: 'tag tag-muted' }, '보관') : null,
             el('span', { class: 'title' }, a.title),
           ]),
           el('div', { class: 'meta' }, [
@@ -4283,10 +4397,7 @@
             a.submitted ? ' · 제출완료' : ' · 미제출',
           ]),
         ]),
-        el('button', { class: 'btn btn-sm' + (a.written ? ' btn-primary' : ''), onclick: function () { Store.update(function (dd) { const x = dd.assignments.find(function (z) { return z.id === a.id; }); x.written = !x.written; }); ctx.refresh(); } }, a.written ? '작성✓' : '작성'),
-        el('button', { class: 'btn btn-sm' + (a.submitted ? ' btn-primary' : ''), onclick: function () { Store.update(function (dd) { const x = dd.assignments.find(function (z) { return z.id === a.id; }); x.submitted = !x.submitted; x.submittedAt = x.submitted ? new Date().toISOString() : null; }); ctx.refresh(); } }, a.submitted ? '제출✓' : '제출 확인'),
-        a.link ? el('a', { href: a.link, target: '_blank', rel: 'noopener noreferrer', class: 'btn btn-sm' }, '열기 ↗') : null,
-      ]);
+      ].concat(actions));
       list.append(item);
     });
     root.append(list);
@@ -4318,34 +4429,41 @@
 
   function renderNotices(root, ctx) {
     const d = Store.data();
-    const all = (d.notices || []).slice().sort(function (a, b) {
+    const everything = (d.notices || []).slice().sort(function (a, b) {
       if (!!a.read !== !!b.read) return a.read ? 1 : -1;
       if (!!a.important !== !!b.important) return a.important ? -1 : 1;
       return (b.date || '').localeCompare(a.date || '');
     });
-    const filtered = noticeOnlyImportant ? all.filter(function (n) { return n.important || !n.read; }) : all;
+    const archivedNtc = everything.filter(function (n) { return n.archived; });
+    const all = noticeShowArchived ? archivedNtc : everything.filter(function (n) { return !n.archived; });
+    const filtered = (noticeOnlyImportant && !noticeShowArchived) ? all.filter(function (n) { return n.important || !n.read; }) : all;
 
     root.append(el('div', { class: 'section-head' }, [
-      el('h2', {}, '공지사항 ' + filtered.length + '건'),
+      el('h2', {}, (noticeShowArchived ? '보관 공지 ' : '공지사항 ') + filtered.length + '건'),
       el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
-        el('button', {
+        archivedNtc.length ? el('button', { class: 'btn btn-sm' + (noticeShowArchived ? ' btn-primary' : ''), onclick: function () { noticeShowArchived = !noticeShowArchived; ctx.refresh(); } }, noticeShowArchived ? '최근 공지 보기' : '보관함 (' + archivedNtc.length + ')') : null,
+        !noticeShowArchived ? el('button', {
           class: 'btn btn-sm' + (noticeOnlyImportant ? ' btn-primary' : ''),
           onclick: function () { noticeOnlyImportant = !noticeOnlyImportant; ctx.refresh(); },
-        }, noticeOnlyImportant ? '중요·미확인만 보는 중' : '중요·미확인만 필터'),
-        all.some(function (n) { return !n.read; })
-          ? el('button', { class: 'btn btn-sm', onclick: function () { Store.update(function (dd) { (dd.notices || []).forEach(function (n) { n.read = true; }); }); ctx.refresh(); ctx.toast('모든 공지를 확인 처리했습니다.'); } }, '모두 읽음')
+        }, noticeOnlyImportant ? '중요·미확인만 보는 중' : '중요·미확인만 필터') : null,
+        (!noticeShowArchived && all.some(function (n) { return !n.read; }))
+          ? el('button', { class: 'btn btn-sm', onclick: function () { Store.update(function (dd) { (dd.notices || []).forEach(function (n) { if (!n.archived) n.read = true; }); }); ctx.refresh(); ctx.toast('모든 공지를 확인 처리했습니다.'); } }, '모두 읽음')
           : null,
         el('button', { class: 'btn btn-primary btn-sm', onclick: function () { openNoticeEditor(null, ctx); } }, '+ 공지 메모 추가'),
       ]),
     ]));
 
-    if (all.length === 0) {
+    if (everything.length === 0) {
       root.append(el('div', { class: 'empty' }, [
         el('span', { class: 'emoji' }, '📢'),
         el('h3', {}, '아직 불러온 공지사항이 없습니다'),
         el('p', {}, '상단의 "🔄 LearnUs 자동 동기화" 버튼을 눌러 모든 수강 강좌의 최신 공지사항과 시험·과제 안내를 한 번에 가져오세요.'),
         el('button', { class: 'btn btn-primary', onclick: function () { triggerLearnUsSync(ctx); } }, '🔄 LearnUs에서 공지·과제 가져오기'),
       ]));
+      return;
+    }
+    if (filtered.length === 0) {
+      root.append(el('p', { class: 'hint' }, noticeShowArchived ? '보관된 공지가 없습니다.' : '표시할 공지가 없습니다. 보관함을 확인해 보세요.'));
       return;
     }
 
@@ -4365,7 +4483,9 @@
             n.body ? ' · ' + n.body.slice(0, 60) + (n.body.length > 60 ? '…' : '') : '',
           ]),
         ]),
-        el('button', {
+        n.archived
+          ? el('button', { class: 'btn btn-sm', onclick: function () { Store.update(function (dd) { const x = (dd.notices || []).find(function (z) { return z.id === n.id; }); if (x) { x.archived = false; x.archivedAt = null; } }); ctx.refresh(); ctx.toast('공지를 복원했습니다.'); } }, '복원')
+          : el('button', {
           class: 'btn btn-sm' + (n.read ? '' : ' btn-primary'),
           onclick: function () {
             Store.update(function (dd) {
@@ -4950,7 +5070,13 @@
             rememberSubmittedAssignment(dd, incoming);
             if (ex) rememberSubmittedAssignment(dd, ex);
           }
-          if (ex) dd.assignments = dd.assignments.filter(function (a) { return a !== ex; });
+          // 삭제 대신 보관: 기존 항목이 있으면 상태만 보관으로, 없으면 보관된 기록으로 추가 (기록 보존 — 보고서 P0)
+          if (ex) {
+            if (la.submitted) { ex.submitted = true; ex.written = true; }
+            ex.archived = true;
+            if (!ex.archivedAt) ex.archivedAt = new Date().toISOString();
+            ex.archivedReason = ex.submitted ? 'submitted' : 'overdue';
+          }
           return;
         }
         if (ex) {
@@ -6098,7 +6224,7 @@
     const thisWeek = weeks[3];
     const adherence = thisWeek.plan > 0 ? Math.round(thisWeek.actual / thisWeek.plan * 100) : null;
     const rewrites = d.answers.filter(function (a) { return a.rewriteOf; }).length;
-    const missedSubmit = d.assignments.filter(function (a) { return !a.submitted && a.due && new Date(a.due) < new Date(); }).length;
+    const missedSubmit = d.assignments.filter(function (a) { return !a.archived && !a.submitted && a.due && new Date(a.due) < new Date(); }).length;
     root.append(el('div', { class: 'grid grid-4', style: 'margin-bottom:16px' }, [
       metricCard('이번 주 이행률', adherence == null ? '미기록' : adherence + '%', '실제 ÷ 기준 계획'),
       metricCard('이번 주 실제 공부', fmtMin(thisWeek.actual), '순 세션 시간'),
@@ -7001,7 +7127,7 @@
       if (document.hidden || Store.loadError() || document.querySelector('.modal-backdrop')) return;
       const data = Store.data();
       const now = Date.now();
-      if (!data.assignments.some(function (a) { return isFinishedAssignment(a, now, data.settings.completedAssignmentKeys || {}); })) return;
+      if (!data.assignments.some(function (a) { return !a.archived && isFinishedAssignment(a, now, data.settings.completedAssignmentKeys || {}); })) return;
       Store.update(function (dd) { pruneFinishedAssignments(dd, now); });
       if (current === 'home' || current === 'academic') refresh();
     }
@@ -7018,8 +7144,28 @@
       }
     });
     maybeOnboard();
+    maybeStorageOriginNotice();
     setupLearnUsBridge();
     setupCloud();
+  }
+
+  // 보고서 P0/P1: 접속 주소(출처)별로 localStorage가 분리된다는 점을 1회 안내하고 백업을 권한다.
+  function maybeStorageOriginNotice() {
+    try {
+      const proto = location.protocol;
+      const host = location.hostname || '';
+      const isPrimary = /github\.io$/i.test(host) || /netlify\.app$/i.test(host);
+      const isLocalFile = proto === 'file:';
+      const isLocalHost = host === 'localhost' || host === '127.0.0.1' || /^192\.168\./.test(host) || /^10\./.test(host);
+      if (isPrimary) return;
+      if (!(isLocalFile || isLocalHost)) return;
+      if (sessionStorage.getItem('nongyeol:origin-notice') === '1') return;
+      sessionStorage.setItem('nongyeol:origin-notice', '1');
+      const where = isLocalFile ? '파일(file://)로 직접 연 상태' : '로컬 주소(' + host + ')';
+      setTimeout(function () {
+        toast('지금은 ' + where + '입니다. 기록은 이 주소 전용으로 저장되며 다른 주소(배포 사이트 등)에서는 따로 보입니다. 주소를 옮기기 전 설정에서 JSON 백업을 내보내세요.', 'warn', 9000);
+      }, 1200);
+    } catch (e) {}
   }
 
   /* =======================================================================

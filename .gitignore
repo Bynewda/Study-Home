@@ -14,3 +14,8 @@ _*.html
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# 작업·분석 산출물 및 브라우저 프로필 (저장소에 올리지 않음 — 쿠키·로그인 등 포함)
+.work/
+.manus/
+outputs/
