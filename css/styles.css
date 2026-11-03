@@ -1376,6 +1376,26 @@ body.exam-sim-active .ai-widget-root { display: none !important; }
   padding: 12px;
   display: flex; flex-direction: column; gap: 10px;
 }
+.ai-mini.ai-web-mini { height: auto; max-height: calc(100vh - 32px); }
+.ai-web-links { display: grid; gap: 8px; }
+.ai-web-link {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); text-decoration: none;
+  transition: border-color .14s, background .14s;
+}
+.ai-web-link:hover { border-color: var(--accent); background: var(--exam-bg); }
+.ai-web-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.ai-web-badge {
+  flex: none; width: 38px; height: 38px; border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--on-accent); font-weight: 800; font-size: .78rem;
+}
+.ai-web-link .main { flex: 1; min-width: 0; }
+.ai-web-arrow { flex: none; color: var(--text-sub); font-size: 1.2rem; }
+.ai-web-card { padding: 20px; margin: 0; min-height: 112px; }
+.grid .ai-web-card { margin: 0; }
+.ai-web-prompt { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 16px; }
 .ai-mini-foot {
   padding: 8px 10px;
   border-top: 1px solid var(--border);

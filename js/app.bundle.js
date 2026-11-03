@@ -6274,7 +6274,7 @@
       el('div', {}, [
         el('div', { class: 'page-eyebrow' }, 'SETTINGS & DATA'),
         el('h1', { class: 'page-title' }, '설정과 데이터'),
-        el('p', { class: 'page-subtitle' }, '시험일과 서재 테마, AI API 연결, 로컬 JSON 백업을 한곳에서 안전하게 관리합니다.'),
+        el('p', { class: 'page-subtitle' }, '시험일과 서재 테마, AI 바로가기, 로컬 JSON 백업을 한곳에서 관리합니다.'),
       ]),
     ]));
 
@@ -6328,26 +6328,15 @@
     uiCard.append(el('div', { class: 'field', style: 'margin:0' }, [el('label', {}, '색상 테마'), themeSel]));
     root.append(uiCard);
 
-    // AI 연결 및 모델 관리 (제안서 4·11쪽: 첫 화면 대신 설정과 데이터에서 API 키 통합 관리)
+    // AI는 각 서비스의 웹페이지에서 사용한다.
     const aiCfgCard = el('div', { class: 'card' });
     aiCfgCard.append(
       el('div', { class: 'section-head' }, [
-        el('h2', { style: 'font-family:var(--font-serif);margin:0' }, 'AI 연결 및 모델 설정'),
+        el('h2', { style: 'font-family:var(--font-serif);margin:0' }, 'AI 웹페이지 바로가기'),
         el('button', { class: 'section-link', onclick: function () { ctx.navigate('ai'); } }, 'AI 도구 전체 화면 열기 →'),
       ]),
-      el('p', { class: 'hint', style: 'margin-bottom:12px' }, 'API 키는 이 브라우저 로컬 저장소에만 보관되며 클라우드 동기화 대상에서 제외됩니다. 질문 전송 시 선택한 문단·문맥이 해당 AI 제공사 서버로 전송됩니다.'),
+      el('p', { class: 'hint' }, 'ChatGPT·Claude·Gemini 등 사용할 AI를 선택하면 공식 웹페이지가 새 탭에서 열립니다.'),
     );
-    const provSel = el('select', { style: 'margin-bottom:10px' });
-    Object.keys(AI_PROVIDERS).forEach(function (pid) {
-      const p = AI_PROVIDERS[pid];
-      provSel.append(el('option', { value: pid, selected: pid === AiStore.provider() }, p.name + (AiStore.hasKey(pid) ? ' (키 연결됨 ✓)' : ' (키 미입력)')));
-    });
-    provSel.onchange = function () { AiStore.setProvider(provSel.value); refreshAiSurfaces(); ctx.refresh(); };
-    aiCfgCard.append(el('div', { class: 'field' }, [el('label', {}, '기본 AI 제공사'), provSel]));
-    if (AiStore.provider() === 'gemini') {
-      aiCfgCard.append(el('div', { class: 'field' }, [el('label', {}, 'Gemini 세부 모델 (Gemini 4 Argon 지원)'), buildGeminiModelControls(false)]));
-    }
-    aiCfgCard.append(buildKeyCard(AiStore.provider(), ctx, true));
     root.append(aiCfgCard);
 
     const backupCard = el('div', { class: 'card' });
@@ -6399,450 +6388,139 @@
      13-b. AI 도구 & 문맥 기반 우측 보조 AI 위젯 (제안서 4·7·11쪽)
      ======================================================================= */
   const AI_LINK_TOOLS = [
-    { id: 'manus', name: 'Manus', vendor: 'Butterfly Effect', url: 'https://manus.im/',     desc: '여러 단계를 스스로 처리하는 에이전트형 도구입니다.', badge: 'M' },
-    { id: 'kiro',  name: 'Kiro',  vendor: 'AWS',              url: 'https://app.kiro.dev/', desc: '스펙 기반으로 코드를 만드는 개발용 에이전트입니다.', badge: 'K' },
+    { id: 'gpt', name: 'ChatGPT', vendor: 'OpenAI', url: 'https://chatgpt.com/', desc: '질문하고 학습 내용을 정리하세요.', badge: 'GPT' },
+    { id: 'claude', name: 'Claude', vendor: 'Anthropic', url: 'https://claude.ai/', desc: '문서를 읽고 글을 다듬어 보세요.', badge: 'C' },
+    { id: 'gemini', name: 'Gemini', vendor: 'Google', url: 'https://gemini.google.com/app', desc: '궁금한 내용을 묻고 자료를 정리하세요.', badge: 'G' },
+    { id: 'manus', name: 'Manus', vendor: 'Manus', url: 'https://manus.im/', desc: '자료 조사와 여러 단계의 작업을 진행하세요.', badge: 'M' },
+    { id: 'kiro', name: 'Kiro', vendor: 'Kiro', url: 'https://app.kiro.dev/', desc: '코드 작성과 개발 작업을 이어가세요.', badge: 'K' },
   ];
-  let _aiSending = false;
-  let _widgetShowKey = false;
-  let _aiContext = null;     // { label: string, text: string }
-  let _aiDraftPrompt = '';
+  let _aiWebPrompt = '';
+  let _aiWebContextLabel = '';
 
   function openContextualAi(opts) {
     opts = opts || {};
-    if (opts.contextText) {
-      _aiContext = { label: opts.label || '선택 문맥', text: opts.contextText };
-    }
-    _aiDraftPrompt = opts.promptDraft || '';
-    if (current === 'ai') {
-      refresh();
-      return;
-    }
-    _widgetShowKey = false;
+    _aiWebContextLabel = opts.label || '선택한 학습 내용';
+    _aiWebPrompt = [
+      opts.contextText ? '[참고 학습 내용 — ' + _aiWebContextLabel + ']\n' + opts.contextText : '',
+      opts.promptDraft || '',
+    ].filter(Boolean).join('\n\n');
+    if (current === 'ai') { refresh(); return; }
     AiStore.setWidgetOpen(true);
-    renderAiWidget({ focusInput: true });
-    updateTopbarAiBtn();
+    renderAiWidget({ focus: true });
   }
 
-  function refreshAiSurfaces(opts) {
-    opts = opts || {};
-    renderAiWidget({ focusInput: !!opts.focusWidget });
-    updateTopbarAiBtn();
+  function refreshAiSurfaces() {
     if (current === 'ai') refresh();
+    else renderAiWidget();
   }
 
-  function buildGeminiModelControls(compact) {
-    const isArgon = AiStore.geminiModel() === 'gemini-4-argon';
-    const modelSel = el('select', { 'aria-label': 'Gemini 모델 선택', style: compact ? 'flex:1;min-width:0' : 'width:auto;min-width:240px;min-height:36px;padding:4px 10px;font-size:.88rem' });
-    GEMINI_MODELS.forEach(function (m) {
-      modelSel.append(el('option', { value: m.id, selected: m.id === AiStore.geminiModel() }, m.label));
+  function buildAiWebLinks(compact) {
+    const links = el('div', { class: compact ? 'ai-web-links' : 'grid grid-2' });
+    AI_LINK_TOOLS.forEach(function (tool) {
+      links.append(el('a', {
+        class: compact ? 'ai-web-link' : 'card ai-web-link ai-web-card',
+        href: tool.url, target: '_blank', rel: 'noopener noreferrer',
+        'aria-label': tool.name + ' 열기 (새 탭)',
+      }, [
+        el('span', { class: 'ai-web-badge', 'aria-hidden': 'true' }, tool.badge),
+        el('div', { class: 'main' }, [
+          el('strong', {}, tool.name),
+          el('div', { class: 'hint' }, compact ? tool.vendor : tool.desc),
+        ]),
+        el('span', { class: 'ai-web-arrow', 'aria-hidden': 'true' }, '↗'),
+      ]));
     });
-    modelSel.onchange = function () {
-      AiStore.setGeminiModel(modelSel.value);
-      refreshAiSurfaces();
-    };
+    return links;
+  }
 
-    const row = el('div', { class: compact ? 'ai-model-row' : 'row', style: compact ? '' : 'gap:8px;flex-wrap:wrap' }, [modelSel]);
-    if (isArgon) {
-      const thinkSel = el('select', { 'aria-label': '추론 깊이 선택', style: compact ? 'width:98px;flex:none' : 'width:auto;min-width:116px;min-height:36px;padding:4px 10px;font-size:.88rem' });
-      GEMINI_THINKING_LEVELS.forEach(function (lv) {
-        thinkSel.append(el('option', { value: lv.id, selected: lv.id === AiStore.geminiThinking() }, lv.label));
-      });
-      thinkSel.onchange = function () {
-        AiStore.setGeminiThinking(thinkSel.value);
-        refreshAiSurfaces();
-      };
-      row.append(thinkSel);
-    }
-    return row;
+  function buildAiWebPrompt(compact) {
+    if (!_aiWebPrompt) return null;
+    const prompt = el('textarea', {
+      rows: compact ? '5' : '7', 'aria-label': 'AI에 붙여넣을 질문',
+      style: 'width:100%;resize:vertical;margin:8px 0',
+    }, _aiWebPrompt);
+    prompt.oninput = function () { _aiWebPrompt = prompt.value; };
+    return el('div', { class: compact ? 'ai-web-prompt' : 'card' }, [
+      el('h3', { style: 'margin:0 0 6px;font-size:1rem' }, _aiWebContextLabel || '질문 준비'),
+      el('p', { class: 'hint', style: 'margin:0' }, '내용을 복사한 뒤 사용할 AI 페이지에 붙여넣으세요.'),
+      prompt,
+      el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
+        el('button', { type: 'button', class: 'btn btn-primary btn-sm', onclick: async function () {
+          try { await navigator.clipboard.writeText(prompt.value); toast('질문을 복사했습니다. AI 페이지에 붙여넣으세요.'); }
+          catch (e) { prompt.focus(); prompt.select(); toast('선택된 내용을 Ctrl+C로 복사해 주세요.', 'warn'); }
+        } }, '질문 복사'),
+        el('button', { type: 'button', class: 'btn btn-sm', onclick: function () { _aiWebPrompt = ''; _aiWebContextLabel = ''; refreshAiSurfaces(); } }, '내용 지우기'),
+      ]),
+    ]);
   }
 
   function renderAiTools(root, ctx) {
-    const provider = AiStore.provider();
     root.append(el('header', { class: 'page-hero' }, [
       el('div', {}, [
-        el('div', { class: 'page-eyebrow' }, 'AI ASSISTANT'),
+        el('div', { class: 'page-eyebrow' }, 'AI WEB SHORTCUTS'),
         el('h1', { class: 'page-title' }, 'AI 도구'),
-        el('p', { class: 'page-subtitle' }, '넓은 화면에서 대화하거나, 단권화 서재·답안 연습 등에서 우측 보조 패널을 열어 문맥과 함께 질문할 수 있습니다.'),
+        el('p', { class: 'page-subtitle' }, '사용할 AI를 선택하면 공식 웹페이지가 새 탭에서 열립니다.'),
       ]),
-      el('button', { class: 'btn btn-sm', onclick: function () { ctx.navigate('settings'); } }, 'API·모델 설정'),
     ]));
-
-    // 모델 선택 탭
-    const tabs = el('div', { class: 'tabs', role: 'tablist', style: 'margin-bottom:12px' });
-    Object.keys(AI_PROVIDERS).forEach(function (pid) {
-      const p = AI_PROVIDERS[pid];
-      const active = pid === provider;
-      tabs.append(el('button', { class: 'tab' + (active ? ' active' : ''), role: 'tab', 'aria-selected': active ? 'true' : 'false', onclick: function () { AiStore.setProvider(pid); ctx.refresh(); } },
-        [p.name, AiStore.hasKey(pid) ? '' : ' 🔑']));
-    });
-    root.append(tabs);
-
-    const p = AI_PROVIDERS[provider];
-
-    if (provider === 'gemini') {
-      const modelBox = el('div', { class: 'row between', style: 'margin-bottom:12px;gap:8px;flex-wrap:wrap' }, [
-        buildGeminiModelControls(false),
-        el('span', { class: 'hint' }, AiStore.geminiModel() === 'gemini-4-argon'
-          ? '※ Gemini 4 Argon은 유료 결제(Billing) 연결 API 키 전용입니다.'
-          : '무료 등급 API 키에서도 바로 사용할 수 있는 빠른 모델입니다.'),
-      ]);
-      root.append(modelBox);
-    }
-
-    // 키가 없으면 키 입력 안내 카드
-    if (!AiStore.hasKey(provider)) {
-      root.append(buildKeyCard(provider, ctx));
-    } else {
-      root.append(buildChatPanel(provider, ctx));
-      // 키 관리(변경/삭제)는 접은 상태로
-      const det = el('details', { style: 'margin-top:10px' });
-      det.append(el('summary', { class: 'hint', style: 'cursor:pointer' }, p.name + ' API 키 관리 (변경·삭제)'));
-      det.append(buildKeyCard(provider, ctx, true));
-      root.append(det);
-    }
-
-    // 링크 전용 도구 (Manus/Kiro)
-    root.append(el('div', { class: 'section-head', style: 'margin-top:24px' }, [el('h3', {}, '바로가기 (채팅 미지원)')]));
-    root.append(el('p', { class: 'hint', style: 'margin-top:-6px' }, 'Manus·Kiro는 공개 채팅 API가 없어 공식 사이트로 바로 연결합니다.'));
-    const linkGrid = el('div', { class: 'grid grid-2' });
-    AI_LINK_TOOLS.forEach(function (t) {
-      const open = function () { window.open(t.url, '_blank', 'noopener,noreferrer'); };
-      const card = el('div', { class: 'card', role: 'button', tabindex: '0', style: 'cursor:pointer;display:flex;flex-direction:column;gap:8px' });
-      card.append(
-        el('div', { class: 'row', style: 'gap:10px;align-items:center' }, [
-          el('span', { 'aria-hidden': 'true', style: 'flex:0 0 auto;width:36px;height:36px;border-radius:9px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-weight:800' }, t.badge),
-          el('div', { style: 'flex:1;min-width:0' }, [el('div', { style: 'font-weight:800' }, t.name), el('div', { class: 'hint', style: 'font-size:.78rem' }, t.vendor)]),
-        ]),
-        el('p', { class: 'hint', style: 'margin:0;flex:1' }, t.desc),
-        el('button', { class: 'btn btn-block', onclick: function (e) { e.stopPropagation(); open(); } }, t.name + ' 열기 ↗')
-      );
-      card.addEventListener('click', open);
-      card.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
-      linkGrid.append(card);
-    });
-    root.append(linkGrid);
-
-    root.append(el('p', { class: 'hint', style: 'margin-top:16px' }, '참고: API 키는 이 브라우저에만 저장되며(클라우드 동기화 대상 아님) AI 답변은 사실과 다를 수 있으니 조문·판례·공고는 원문으로 확인하세요.'));
+    root.append(buildAiWebLinks(false));
+    const prompt = buildAiWebPrompt(false);
+    if (prompt) root.append(prompt);
   }
 
-  function buildKeyCard(provider, ctx, compact) {
-    const p = AI_PROVIDERS[provider];
-    const card = el('div', { class: 'card' });
-    if (!compact) card.append(el('h3', {}, p.name + ' 사용 설정'));
-    card.append(el('p', { class: 'hint', style: 'margin-top:' + (compact ? '8px' : '4px') }, p.keyHint));
-    const input = el('input', { type: 'password', placeholder: p.name + ' API 키 붙여넣기', value: AiStore.getKey(provider), autocomplete: 'off', spellcheck: 'false' });
-    const row = el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;margin-top:8px' }, [
-      el('div', { class: 'field', style: 'flex:1;min-width:220px;margin:0' }, [input]),
-      el('button', { class: 'btn btn-primary', onclick: function () {
-        const v = input.value.trim();
-        if (!v) { ctx.toast('API 키를 입력하세요.', 'warn'); return; }
-        AiStore.setKey(provider, v); _widgetShowKey = false; refreshAiSurfaces(); ctx.toast(p.name + ' 키를 저장했습니다.');
-      } }, '저장'),
-    ]);
-    card.append(row);
-    if (AiStore.hasKey(provider)) {
-      card.append(el('button', { class: 'btn btn-sm btn-danger', style: 'margin-top:8px', onclick: function () { AiStore.setKey(provider, ''); refreshAiSurfaces(); ctx.toast(p.name + ' 키를 삭제했습니다.'); } }, '키 삭제'));
-    }
-    card.append(el('p', { class: 'hint', style: 'margin-top:8px' }, ['키 발급: ', el('a', { href: p.keyUrl, target: '_blank', rel: 'noopener noreferrer' }, p.keyUrl + ' ↗')]));
-    return card;
-  }
-
-  function buildChatPanel(provider, ctx) {
-    const p = AI_PROVIDERS[provider];
-    const wrap = el('div', { class: 'card', style: 'display:flex;flex-direction:column;padding:0;overflow:hidden' });
-
-    // 헤더
-    wrap.append(el('div', { class: 'row between', style: 'padding:12px 16px;border-bottom:1px solid var(--border)' }, [
-      el('div', { class: 'row', style: 'gap:8px;align-items:center' }, [
-        el('span', { 'aria-hidden': 'true', style: 'width:30px;height:30px;border-radius:8px;background:var(--accent);color:var(--on-accent);display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem' }, p.badge),
-        el('div', {}, [el('strong', {}, p.name), el('span', { class: 'hint', style: 'margin-left:8px;font-size:.75rem' }, p.modelLabel())]),
-      ]),
-      el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { AiStore.clearChat(provider); refreshAiSurfaces(); } }, '대화 지우기'),
-    ]));
-
-    // 메시지 영역
-    const msgs = el('div', { id: 'ai-msgs', style: 'padding:16px;display:flex;flex-direction:column;gap:12px;min-height:280px;max-height:52vh;overflow-y:auto' });
-    const history = AiStore.chat(provider);
-    if (history.length === 0) {
-      msgs.append(el('div', { class: 'empty', style: 'padding:32px 0;margin:auto' }, [el('span', { class: 'emoji' }, '💬'), el('h3', {}, p.name + '에게 물어보세요'), el('p', {}, '예: "진보성 판단에서 사후적 고찰 금지가 뭔지 쉽게 설명해줘"')]));
-    } else {
-      history.forEach(function (m) { msgs.append(renderAiMessage(m, false)); });
-    }
-    wrap.append(msgs);
-
-    // 입력 영역
-    const ta = el('textarea', { placeholder: p.name + '에게 질문 (Enter 전송 · Shift+Enter 줄바꿈)', rows: '2', style: 'flex:1;min-height:44px;max-height:160px;resize:vertical' });
-    const sendBtn = el('button', { class: 'btn btn-primary', style: 'align-self:stretch' }, _aiSending ? '전송 중…' : '전송');
-    if (_aiSending) { ta.disabled = true; sendBtn.disabled = true; }
-
-    function doSend() {
-      const text = ta.value.trim();
-      if (!text || _aiSending) return;
-      ta.value = '';
-      sendMessage(provider, text, ctx);
-    }
-    sendBtn.onclick = doSend;
-    ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); doSend(); } });
-
-    wrap.append(el('div', { class: 'row', style: 'gap:8px;padding:12px 16px;border-top:1px solid var(--border);align-items:flex-end' }, [ta, sendBtn]));
-
-    // 렌더 직후 스크롤 하단 + 입력창 포커스
-    setTimeout(function () { msgs.scrollTop = msgs.scrollHeight; if (!_aiSending) ta.focus(); }, 0);
-    return wrap;
-  }
-
-  function renderAiMessage(m, mini) {
-    const mine = m.role === 'user';
-    const pad = mini ? '8px 11px' : '10px 14px';
-    const fs = mini ? 'font-size:.87rem;line-height:1.55;' : 'line-height:1.6;';
-    const text = m.content || (m.pending ? '답변 생성 중…' : '');
-    const bubble = el('div', {
-      class: 'ai-bubble ' + (mine ? 'me' : 'bot') + (m.error ? ' err' : ''),
-      style: 'max-width:86%;padding:' + pad + ';border-radius:12px;white-space:pre-wrap;word-break:break-word;' + fs
-        + (mine
-          ? 'align-self:flex-end;background:var(--accent);color:var(--on-accent);border-bottom-right-radius:4px'
-          : (m.error
-            ? 'align-self:flex-start;background:var(--warn-bg);color:var(--warn-fg);border:1px solid var(--warn-fg);border-bottom-left-radius:4px'
-            : 'align-self:flex-start;background:var(--bg);border:1px solid var(--border);border-bottom-left-radius:4px')),
-    }, text);
-    return bubble;
-  }
-
-  // 모든 페이지 오른쪽에서 열 수 있는 컴팩트 AI 채팅 위젯
   function renderAiWidget(opts) {
     opts = opts || {};
     const root = document.getElementById('ai-widget-root');
     const app = document.getElementById('app-shell');
     if (!root) return;
-
-    // 'AI 도구' 전체 페이지에서는 본문 채팅창과 중복되지 않도록 미니 위젯 숨김
+    clear(root);
     if (current === 'ai') {
       root.classList.add('hidden');
       if (app) app.classList.remove('ai-docked');
-      clear(root);
       return;
     }
     root.classList.remove('hidden');
-
     const isOpen = AiStore.widgetOpen();
     const isDocked = isOpen && AiStore.widgetDocked();
     if (app) app.classList.toggle('ai-docked', isDocked);
-    clear(root);
-
     if (!isOpen) {
       root.append(el('button', {
-        class: 'ai-fab',
-        'aria-label': 'AI 도우미 열기',
-        onclick: function () { _widgetShowKey = false; AiStore.setWidgetOpen(true); renderAiWidget({ focusInput: true }); updateTopbarAiBtn(); },
-      }, [svgIcon('ai'), _aiSending ? 'AI 답변 중…' : 'AI 도우미']));
+        type: 'button', class: 'ai-fab', 'aria-label': 'AI 도우미 열기',
+        onclick: function () { AiStore.setWidgetOpen(true); renderAiWidget({ focus: true }); },
+      }, [svgIcon('ai'), 'AI 도우미']));
       return;
     }
-
-    const provider = AiStore.provider();
-    const p = AI_PROVIDERS[provider];
-    const hasKey = AiStore.hasKey(provider);
-    const showKey = !hasKey || _widgetShowKey;
-
-    const panel = el('section', { class: 'ai-mini', 'aria-label': 'AI 도우미 채팅창' });
-
-    // 1) 상단 헤더
-    const head = el('div', { class: 'ai-mini-head' }, [
+    const panel = el('section', { class: 'ai-mini ai-web-mini', 'aria-label': 'AI 웹페이지 바로가기' });
+    panel.append(el('div', { class: 'ai-mini-head' }, [
       el('div', { class: 'ai-mini-title' }, [svgIcon('ai'), 'AI 도우미']),
       el('div', { class: 'ai-mini-actions' }, [
-        el('button', {
-          class: 'ai-icon-btn' + (showKey ? ' active' : ''),
-          title: p.name + ' API 키 설정',
-          'aria-label': 'API 키 설정',
-          onclick: function () { if (hasKey) { _widgetShowKey = !_widgetShowKey; renderAiWidget({ focusInput: !_widgetShowKey }); } },
-        }, [svgIcon('key')]),
-        el('button', {
-          class: 'ai-icon-btn',
-          title: '현재 대화 비우기',
-          'aria-label': '대화 비우기',
-          onclick: function () {
-            if (!AiStore.chat(provider).length) return;
-            AiStore.clearChat(provider);
-            renderAiWidget({ focusInput: true });
-            toast(p.name + ' 대화를 비웠습니다.');
-          },
-        }, [svgIcon('trash')]),
-        el('button', {
-          class: 'ai-icon-btn ai-dock-only' + (isDocked ? ' active' : ''),
-          title: isDocked ? '작은 플로팅 창으로 전환' : '오른쪽 패널로 고정',
+        el('button', { type: 'button', class: 'ai-icon-btn ai-dock-only',
           'aria-label': isDocked ? '작은 창으로 전환' : '오른쪽 패널로 고정',
+          title: isDocked ? '작은 창으로 전환' : '오른쪽 패널로 고정',
           onclick: function () { AiStore.setWidgetDocked(!AiStore.widgetDocked()); renderAiWidget(); },
-        }, [svgIcon('dock')]),
-        el('button', {
-          class: 'ai-icon-btn',
-          title: 'AI 도구 전체 페이지로 보기',
-          'aria-label': '전체 페이지로 열기',
-          onclick: function () { navigate('ai'); },
+        }, [svgIcon(isDocked ? 'minimize' : 'dock')]),
+        el('button', { type: 'button', class: 'ai-icon-btn', 'aria-label': 'AI 도구 전체 화면 열기',
+          title: 'AI 도구 전체 화면 열기', onclick: function () { navigate('ai'); },
         }, [svgIcon('expand')]),
-        el('button', {
-          class: 'ai-icon-btn',
-          title: '채팅창 접기',
-          'aria-label': '채팅창 접기',
-          onclick: function () { AiStore.setWidgetOpen(false); renderAiWidget(); updateTopbarAiBtn(); },
-        }, [svgIcon('minimize')]),
-      ]),
-    ]);
-    panel.append(head);
-
-    // 2) 제공자 & 세부 모델 바
-    const provRow = el('div', { class: 'ai-prov-row', role: 'tablist' });
-    Object.keys(AI_PROVIDERS).forEach(function (pid) {
-      const item = AI_PROVIDERS[pid];
-      const active = pid === provider;
-      provRow.append(el('button', {
-        class: 'ai-prov-pill',
-        role: 'tab',
-        'aria-selected': active ? 'true' : 'false',
-        onclick: function () { _widgetShowKey = false; AiStore.setProvider(pid); renderAiWidget({ focusInput: AiStore.hasKey(pid) }); },
-      }, item.name + (AiStore.hasKey(pid) ? '' : ' 🔑')));
-    });
-    const bar = el('div', { class: 'ai-mini-bar' }, [provRow]);
-    if (provider === 'gemini') {
-      bar.append(buildGeminiModelControls(true));
-    } else {
-      bar.append(el('div', { class: 'hint', style: 'font-size:.73rem;margin:0' }, '모델: ' + p.modelLabel()));
-    }
-    panel.append(bar);
-
-    // 3) 본문 (키 미연결 시 간결한 연결 카드 또는 메시지 목록)
-    const body = el('div', { class: 'ai-mini-body' });
-    if (showKey) {
-      const keyInput = el('input', { type: 'password', placeholder: p.name + ' API 키 붙여넣기', value: AiStore.getKey(provider), autocomplete: 'off', spellcheck: 'false', style: 'min-height:38px;font-size:.88rem' });
-      const saveKey = function () {
-        const v = keyInput.value.trim();
-        if (!v) { toast('API 키를 입력하세요.', 'warn'); keyInput.focus(); return; }
-        AiStore.setKey(provider, v);
-        _widgetShowKey = false;
-        renderAiWidget({ focusInput: true });
-        toast(p.name + ' 키를 저장했습니다.');
-      };
-      keyInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); saveKey(); } });
-
-      body.append(
-        el('div', { style: 'font-weight:700;font-size:.92rem' }, p.name + ' 연결하기'),
-        el('p', { class: 'hint', style: 'font-size:.78rem;line-height:1.55;margin:0' }, p.keyHint),
-        keyInput,
-        el('div', { class: 'row', style: 'gap:6px' }, [
-          el('button', { class: 'btn btn-primary btn-sm', style: 'flex:1', onclick: saveKey }, '키 저장'),
-          hasKey ? el('button', { class: 'btn btn-sm', onclick: function () { _widgetShowKey = false; renderAiWidget({ focusInput: true }); } }, '취소') : null,
-          hasKey ? el('button', { class: 'btn btn-sm btn-danger', onclick: function () { AiStore.setKey(provider, ''); _widgetShowKey = false; renderAiWidget(); toast(p.name + ' 키를 삭제했습니다.'); } }, '삭제') : null,
-        ]),
-        el('div', { class: 'row between', style: 'margin-top:4px' }, [
-          el('a', { href: p.keyUrl, target: '_blank', rel: 'noopener noreferrer', style: 'font-size:.76rem' }, 'API 키 발급 ↗'),
-          el('button', { type: 'button', class: 'section-link', style: 'font-size:.76rem', onclick: function () { navigate('settings'); } }, '설정과 데이터에서 관리 →'),
-        ]),
-      );
-      panel.append(body);
-      root.append(panel);
-      if (opts.focusInput) setTimeout(function () { keyInput.focus(); }, 0);
-      return;
-    }
-
-    const history = AiStore.chat(provider);
-    if (history.length === 0) {
-      body.append(el('div', { style: 'margin:auto;text-align:center;padding:16px 8px;color:var(--text-sub)' }, [
-        el('div', { style: 'font-family:var(--font-serif);font-weight:700;color:var(--text);margin-bottom:6px;font-size:.98rem' }, '서재를 닫지 않고 바로 질문하세요'),
-        el('p', { class: 'hint', style: 'font-size:.8rem;margin:0;line-height:1.55' }, '단권화 서재의 "+ 이 쟁점 질문하기"나 답안 채점의 "누락된 논점 점검"과도 바로 연동됩니다.'),
-      ]));
-    } else {
-      history.forEach(function (m) { body.append(renderAiMessage(m, true)); });
-    }
-    panel.append(body);
-
-    // 선택된 학습 문맥 표시 바 (제안서 11쪽: 제공사 외부 전송 안내 포함)
-    if (_aiContext) {
-      panel.append(el('div', { class: 'ai-context-chip' }, [
-        el('span', { style: 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap' }, '문맥: ' + _aiContext.label + ' · 질문 시 전송됨'),
-        el('button', {
-          type: 'button',
-          style: 'background:none;border:none;color:inherit;cursor:pointer;font-weight:700;padding:0 4px',
-          'aria-label': '문맥 첨부 해제',
-          onclick: function () { _aiContext = null; renderAiWidget({ focusInput: true }); },
+        el('button', { type: 'button', class: 'ai-icon-btn', 'aria-label': 'AI 도우미 닫기',
+          title: '닫기', onclick: function () { AiStore.setWidgetOpen(false); renderAiWidget(); const launcher = root.querySelector('.ai-fab'); if (launcher) launcher.focus(); },
         }, '✕'),
-      ]));
-    }
-
-    // 4) 하단 입력창
-    const ta = el('textarea', { placeholder: p.name + '에게 질문 (Enter 전송)', rows: _aiDraftPrompt ? '2' : '1', 'aria-label': p.name + ' 질문 입력' }, _aiDraftPrompt || '');
-    if (_aiDraftPrompt) _aiDraftPrompt = '';
-    const sendBtn = el('button', { class: 'btn btn-primary btn-sm' }, _aiSending ? '…' : '전송');
-    if (_aiSending) { ta.disabled = true; sendBtn.disabled = true; }
-
-    function doSend() {
-      const text = ta.value.trim();
-      if (!text || _aiSending) return;
-      ta.value = '';
-      sendMessage(provider, text, ctx);
-    }
-    sendBtn.onclick = doSend;
-    ta.addEventListener('keydown', function (e) { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); doSend(); } });
-
-    panel.append(el('div', { class: 'ai-mini-foot' }, [ta, sendBtn]));
+      ]),
+    ]));
+    const body = el('div', { class: 'ai-mini-body' }, [
+      el('p', { class: 'hint', style: 'margin:0 0 12px' }, '사용할 AI를 선택하세요. 새 탭에서 열립니다.'),
+      buildAiWebLinks(true),
+    ]);
+    const prompt = buildAiWebPrompt(true);
+    if (prompt) body.append(prompt);
+    panel.append(body);
     root.append(panel);
-
-    setTimeout(function () {
-      body.scrollTop = body.scrollHeight;
-      if (opts.focusInput && !_aiSending) ta.focus();
-    }, 0);
+    if (opts.focus) { const firstLink = panel.querySelector('a'); if (firstLink) firstLink.focus(); }
   }
 
   function updateTopbarAiBtn() {
     const btn = document.getElementById('topbar-ai-btn');
     if (!btn) return;
-    const active = current === 'ai' || AiStore.widgetOpen();
-    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-    btn.style.borderColor = active ? 'var(--accent)' : '';
-    btn.style.color = active ? 'var(--accent)' : '';
-  }
-
-  async function sendMessage(provider, text, ctx) {
-    const p = AI_PROVIDERS[provider];
-    const key = AiStore.getKey(provider);
-    if (!key) { ctx.toast('먼저 API 키를 입력하세요.', 'warn'); return; }
-
-    const outgoingText = _aiContext
-      ? ('[참고 학습 문맥 — ' + _aiContext.label + ']\n' + _aiContext.text + '\n\n[질문]\n' + text)
-      : text;
-    _aiContext = null;
-
-    AiStore.pushMessage(provider, { role: 'user', content: outgoingText });
-    AiStore.pushMessage(provider, { role: 'assistant', content: '', pending: true });
-    _aiSending = true;
-    refreshAiSurfaces();
-
-    try {
-      let history = AiStore.chat(provider).filter(function (m) { return !m.pending && !m.error; });
-      while (history.length && history[0].role !== 'user') history = history.slice(1);
-      const result = await p.send(key, history);
-      const replyText = typeof result === 'string' ? result : result.text;
-      const msgObj = { role: 'assistant', content: replyText };
-      if (result && result.apiParts) {
-        msgObj.apiParts = result.apiParts;
-        msgObj.geminiModel = result.geminiModel;
-      }
-      AiStore.replaceLast(provider, msgObj);
-    } catch (e) {
-      let hint = (e && e.message) ? e.message : String(e);
-      if (/Gemini 4 Argon/.test(hint)) {
-        // Argon 전용 상세 안내 메시지는 그대로 유지
-      } else if (/Failed to fetch|NetworkError|CORS/i.test(hint)) {
-        hint = '네트워크/CORS 오류로 브라우저에서 직접 호출이 막혔습니다. 키가 맞는지, 네트워크 상태를 확인하세요. (OpenAI는 환경에 따라 브라우저 직접 호출이 제한될 수 있습니다.)';
-      } else if (/not found|not supported|unsupported model|is not found/i.test(hint)) {
-        hint = '이 키에서 지원하지 않는 모델입니다. 모델 이름이 바뀌었을 수 있어요. (' + hint + ')';
-      } else if (/401|403|API key not valid|invalid.*key|unauthor|permission/i.test(hint)) {
-        hint = 'API 키가 올바르지 않거나 권한이 없습니다. 키를 다시 확인하세요. (' + hint + ')';
-      } else if (/429|quota|rate limit|resource.*exhausted/i.test(hint)) {
-        hint = '요청 한도/크레딧을 초과했습니다. 잠시 후 다시 시도하거나 결제·사용량을 확인하세요. (' + hint + ')';
-      }
-      AiStore.replaceLast(provider, { role: 'assistant', content: '오류: ' + hint, error: true });
-    } finally {
-      _aiSending = false;
-      refreshAiSurfaces({ focusWidget: current !== 'ai' && AiStore.widgetOpen() });
-    }
+    btn.setAttribute('aria-pressed', current === 'ai' || AiStore.widgetOpen() ? 'true' : 'false');
   }
 
   /* =======================================================================
