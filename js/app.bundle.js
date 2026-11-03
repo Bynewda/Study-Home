@@ -150,8 +150,11 @@
     (focusable[1] || focusable[0]) && (focusable[1] || focusable[0]).focus();
     function onKey(e) {
       if (e.key === 'Escape') close();
-      if (e.key === 'Tab' && focusable.length) {
-        const first = focusable[0], last = focusable[focusable.length - 1];
+      if (e.key === 'Tab') {
+        // 검색 결과처럼 모달 내용이 바뀌어도 현재 표시된 요소들 사이에서 이동한다.
+        const currentFocusable = m.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+        if (!currentFocusable.length) return;
+        const first = currentFocusable[0], last = currentFocusable[currentFocusable.length - 1];
         if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
@@ -2826,6 +2829,7 @@
         el('p', { class: 'page-subtitle' }, '실전 작성(단서·AI 숨김)과 채점·피드백을 분리하고, 감점 원인을 재작성과 보완 과업으로 연결합니다.'),
       ]),
       el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
+        librarySearchButton('answers'),
         el('button', { class: 'btn', onclick: function () { openExamSimMode(ctx); } }, '⏱ 실전 답안 작성'),
         el('button', { class: 'btn btn-primary', onclick: function () { openAnswerEditor(null, ctx); } }, '+ 채점·연습 등록'),
       ]),
@@ -3345,6 +3349,7 @@
         el('p', { class: 'page-subtitle' }, '과목과 쟁점을 기준으로 서재를 정리하고, 한 쟁점에 원문·답안·복습 카드를 함께 연결합니다.'),
       ]),
       el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
+        librarySearchButton('notes'),
         el('button', {
           class: 'btn btn-sm',
           onclick: function () { noteRailCollapsed = !noteRailCollapsed; ctx.refresh(); },
@@ -3861,6 +3866,7 @@
         el('p', { class: 'page-subtitle' }, '답을 보기 전 스스로 인출하고, 헷갈린 카드는 원문 서재 노트로 즉시 돌아가 근거를 확인합니다.'),
       ]),
       el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
+        librarySearchButton('review'),
         limitSel,
         el('button', { class: 'btn btn-sm', onclick: function () { openCardEditor(null, ctx); } }, '+ 새 카드'),
       ]),
@@ -6931,26 +6937,67 @@
     const m = modal({ title: '+ 빠른 기록', body: el('div', {}, [input, list]), footer: [el('button', { class: 'btn', onclick: function () { m.close(); } }, '닫기')] });
   }
 
-  function openSearch(query) {
+  function librarySearchButton(route) {
+    return el('button', {
+      type: 'button', class: 'btn', 'aria-label': ROUTES[route].title + ' 검색',
+      onclick: function () { openSearch('', route); },
+    }, [svgIcon('search'), '검색']);
+  }
+
+  function openSearch(query, scope) {
     query = query || '';
-    const input = el('input', { type: 'search', value: query, placeholder: '서재 노트 · 과업 · 답안 · 복습 카드 · 학업 공지 검색', 'aria-label': '전체 검색', style: 'font-size:1.05rem' });
+    const scopes = {
+      answers: { title: '답안 연습 검색', placeholder: '과목 · 출처 · 회차 · 쟁점 · 답안 내용 검색' },
+      notes: { title: '단권화 서재 검색', placeholder: '과목 · 제목 · 단원 · 쟁점 · 본문 검색' },
+      review: { title: '복습 카드 검색', placeholder: '과목 · 질문 · 답변 · 쟁점 검색' },
+    };
+    const config = scopes[scope];
+    if (!config) scope = '';
+    const title = config ? config.title : '서재 전체 검색';
+    const input = el('input', { type: 'search', value: query, placeholder: config ? config.placeholder : '서재 노트 · 과업 · 답안 · 복습 카드 · 학업 공지 검색', 'aria-label': config ? title + '어' : '전체 검색', style: 'font-size:1.05rem' });
+    const status = el('p', { class: 'hint', role: 'status', 'aria-live': 'polite' });
     const results = el('div', { class: 'list', style: 'margin-top:12px;max-height:50vh;overflow:auto' });
     function run(q) {
       results.innerHTML = ''; q = (q || '').trim().toLowerCase();
-      if (!q) { results.append(el('p', { class: 'hint' }, '검색어를 입력하세요. (단축키 Ctrl + K)')); return; }
+      status.textContent = '';
+      if (!q && !scope) { status.textContent = '검색어를 입력하세요. (단축키 Ctrl + K)'; return; }
       const d = Store.data(); const hits = [];
-      d.notes.forEach(function (n) { if ((n.title + ' ' + n.issue + ' ' + n.body).toLowerCase().indexOf(q) >= 0) hits.push({ type: '서재 노트', title: n.title, route: 'notes', id: n.id }); });
-      d.tasks.forEach(function (t) { if (t.title.toLowerCase().indexOf(q) >= 0) hits.push({ type: '과업', title: t.title, route: 'tasks' }); });
-      d.answers.forEach(function (a) { if ((a.source + ' ' + a.note + ' ' + (a.issue || '')).toLowerCase().indexOf(q) >= 0) hits.push({ type: '답안 연습', title: (a.source || '답안') + ' ' + (a.round || ''), route: 'answers' }); });
-      d.cards.forEach(function (c) { if ((c.q + ' ' + c.a).toLowerCase().indexOf(q) >= 0) hits.push({ type: '복습 카드', title: c.q, route: 'review' }); });
-      (d.assignments || []).forEach(function (a) { if ((a.title + ' ' + (a.courseName || '')).toLowerCase().indexOf(q) >= 0) hits.push({ type: '대학 과제', title: a.title, route: 'academic', tab: 'assignments' }); });
-      (d.notices || []).forEach(function (n) { if ((n.title + ' ' + (n.courseName || '') + ' ' + (n.body || '')).toLowerCase().indexOf(q) >= 0) hits.push({ type: '중요 공지', title: n.title, route: 'academic', tab: 'notices' }); });
-      if (hits.length === 0) { results.append(el('p', { class: 'hint' }, '일치하는 기록이 없습니다.')); return; }
-      hits.slice(0, 30).forEach(function (h) { results.append(el('button', { class: 'item', style: 'width:100%;text-align:left;cursor:pointer', onclick: function () { m.close(); if (h.route === 'notes' && h.id) { noteSelectedId = h.id; Store.update(function (dd) { dd.lastOpenNote = h.id; }); } if (h.route === 'academic' && h.tab) { acadTab = h.tab; } navigate(h.route); } }, [el('span', { class: 'tag tag-muted' }, h.type), el('div', { class: 'main' }, el('div', { class: 'title' }, h.title || '(제목 없음)'))])); });
+      function subjectName(id) { const sub = d.subjects.find(function (s) { return s.id === id; }); return sub ? sub.name : ''; }
+      function add(hit, fields) {
+        if (scope && hit.route !== scope) return;
+        if (!q || fields.join(' ').toLowerCase().indexOf(q) >= 0) hits.push(hit);
+      }
+      d.notes.forEach(function (n) { add({ type: '서재 노트', title: n.title, route: 'notes', id: n.id }, [subjectName(n.subjectId), n.title, n.unit, n.issue, n.body]); });
+      d.tasks.forEach(function (t) { add({ type: '과업', title: t.title, route: 'tasks' }, [t.title]); });
+      d.answers.forEach(function (a) { add({ type: '답안 연습', title: (a.source || '답안') + (a.round ? ' ' + a.round + '회' : '') + (a.issue ? ' · ' + a.issue : ''), route: 'answers', id: a.id }, [subjectName(a.subjectId), a.source, a.round, a.issue, a.note, a.draftOutline, (a.errors || []).join(' ')]); });
+      d.cards.forEach(function (c) { add({ type: '복습 카드', title: c.q, route: 'review', id: c.id }, [subjectName(c.subjectId), c.q, c.a, c.issue]); });
+      (d.assignments || []).forEach(function (a) { add({ type: '대학 과제', title: a.title, route: 'academic', tab: 'assignments' }, [a.title, a.courseName]); });
+      (d.notices || []).forEach(function (n) { add({ type: '중요 공지', title: n.title, route: 'academic', tab: 'notices' }, [n.title, n.courseName, n.body]); });
+      if (hits.length === 0) { status.textContent = q ? '일치하는 기록이 없습니다.' : '아직 등록된 기록이 없습니다.'; return; }
+      status.textContent = hits.length > 30 ? hits.length + '건 중 30건 표시 · 검색어를 입력해 범위를 좁혀보세요.' : '검색 결과 ' + hits.length + '건';
+      hits.slice(0, 30).forEach(function (h) {
+        results.append(el('button', { type: 'button', class: 'item', style: 'width:100%;text-align:left;cursor:pointer', onclick: function () {
+          m.close();
+          if (h.route === 'notes' && h.id) {
+            const note = Store.note(h.id);
+            if (note) { noteFilter.q = ''; noteFilter.status = ''; collapsedTreeSubj[note.subjectId] = false; openNoteById(h.id, ctx); return; }
+          }
+          if (h.route === 'answers' && h.id) {
+            const answer = Store.data().answers.find(function (a) { return a.id === h.id; });
+            if (answer) { openAnswerEditor(answer, ctx); return; }
+          }
+          if (h.route === 'review' && h.id) {
+            const card = Store.data().cards.find(function (c) { return c.id === h.id; });
+            if (card) { openCardEditor(card, ctx); return; }
+          }
+          if (h.route === 'academic' && h.tab) acadTab = h.tab;
+          navigate(h.route);
+        } }, [el('span', { class: 'tag tag-muted' }, h.type), el('div', { class: 'main' }, el('div', { class: 'title' }, h.title || '(제목 없음)'))]));
+      });
     }
     input.oninput = function () { run(input.value); };
     run(query);
-    const m = modal({ title: '서재 전체 검색', body: el('div', {}, [input, results]) });
+    const m = modal({ title: title, body: el('div', {}, [input, status, results]) });
   }
 
   function buildShell() {
@@ -7021,24 +7068,6 @@
     const scrim = el('div', { class: 'scrim', id: 'scrim', onclick: function () { sidebar.classList.remove('open'); scrim.classList.remove('show'); } });
 
     const main = el('div', { class: 'main' });
-    const searchInput = el('input', { type: 'search', placeholder: '노트, 쟁점, 답안 검색', 'aria-label': '전체 검색' });
-    searchInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') openSearch(searchInput.value); });
-    // 모달을 닫은 뒤 복원되는 초점으로 검색창이 다시 열리지 않도록 클릭으로 연다.
-    searchInput.addEventListener('click', function () { openSearch(searchInput.value); });
-
-    const topbarAiBtn = el('button', {
-      class: 'btn btn-sm',
-      id: 'topbar-ai-btn',
-      title: '우측 AI 도우미 열기/닫기',
-      'aria-label': '우측 AI 도우미 열기/닫기',
-      onclick: function () {
-        if (current === 'ai') { toast('현재 AI 도구 전체 화면입니다. 다른 메뉴에서 누르면 우측 보조 패널이 열립니다.'); return; }
-        const next = !AiStore.widgetOpen();
-        AiStore.setWidgetOpen(next);
-        renderAiWidget({ focusInput: next });
-        updateTopbarAiBtn();
-      },
-    }, [svgIcon('ai'), el('span', { class: 'desktop-only', style: 'font-size:.82rem' }, 'AI')]);
 
     const mobileBrand = el('button', {
       type: 'button',
@@ -7059,13 +7088,6 @@
           el('span', { class: 'topbar-crumb-sep' }, '/'),
           el('span', { class: 'topbar-crumb-cur', id: 'page-title' }, '오늘의 공부'),
         ]),
-        el('div', { class: 'search-box' }, [
-          svgIcon('search'),
-          searchInput,
-          el('span', { class: 'kbd-chip' }, 'Ctrl K'),
-        ]),
-        el('button', { class: 'btn btn-sm', onclick: openInbox, title: '+ 빠른 기록', 'aria-label': '빠른 기록' }, [svgIcon('inbox')]),
-        topbarAiBtn,
       ]),
     ]);
 
@@ -7136,11 +7158,11 @@
     Timer.resumeIfActive();
     window.addEventListener('timer:changed', function () { refresh(); });
     window.addEventListener('hashchange', onHashChange);
-    // Ctrl/Cmd+K: 전체 검색 열기 (보고서 10쪽: 검색·빠른 생성 단축 경로)
+    // Ctrl/Cmd+K: 서재와 답안에서는 현재 목록 검색, 다른 화면에서는 전체 검색
     window.addEventListener('keydown', function (e) {
       if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
         e.preventDefault();
-        if (!document.querySelector('.modal-backdrop')) openSearch('');
+        if (!document.querySelector('.modal-backdrop')) openSearch('', ['answers', 'notes', 'review'].indexOf(current) >= 0 ? current : '');
       }
     });
     maybeOnboard();
