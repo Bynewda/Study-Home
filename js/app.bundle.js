@@ -51,6 +51,7 @@
     logout:  '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/>',
     search:  '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
     ai:      '<path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/><path d="M12 7.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/>',
+    lecture: '<rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M10 8.2l4.2 2.3L10 12.8z" fill="currentColor" stroke="none"/><path d="M8 21h8M12 17v4"/>',
     key:     '<circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3L20 3"/><path d="M16 7l3 3"/><path d="M18.5 4.5l2.5 2.5"/>',
     trash:   '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/>',
     dock:    '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
@@ -326,6 +327,9 @@
       courses: JSON.parse(JSON.stringify(DEFAULT_COURSES_2026_2)),
       assignments: JSON.parse(JSON.stringify(DEFAULT_ASSIGNMENTS_2026_2)),
       notices: [],
+      // 강의 학습(인강): 강좌(lectures) + 회차·시점·질문 기록(lectureLogs) (제안서 5·9·13쪽)
+      // 원본은 기존 노트·답안·과업에 두고, 강의는 출처와 학습 맥락을 보태는 항목으로 설계.
+      lectures: [], lectureLogs: [], lastLectureResume: null,
       inbox: [], focusToday: [],
       reviews: [], retros: {}, lastOpenNote: null, lastStudyResume: null,
       dismissedAutoBlocks: {},
@@ -361,6 +365,8 @@
       if (!Array.isArray(next.notices)) next.notices = [];
       if (!next.dismissedAutoBlocks || typeof next.dismissedAutoBlocks !== 'object') next.dismissedAutoBlocks = {};
       if (!Array.isArray(next.syncedCourseWeeks)) next.syncedCourseWeeks = [];
+      if (!Array.isArray(next.lectures)) next.lectures = [];
+      if (!Array.isArray(next.lectureLogs)) next.lectureLogs = [];
 
       // 기존 과목에 학정번호(code) 보강
       next.courses.forEach(function (c) {
@@ -464,7 +470,7 @@
         // 앱 식별자(있으면) 확인
         if (parsed.app && parsed.app !== 'patent-study-home') throw new Error('다른 앱의 백업 파일로 보입니다 (app=' + parsed.app + ').');
         // 컬렉션은 배열이어야 함
-        const cols = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','inbox','reviews','subjects'];
+        const cols = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','inbox','reviews','subjects'];
         const issues = [];
         cols.forEach(function (c) {
           if (incoming[c] != null && !Array.isArray(incoming[c])) issues.push(c + ' 필드가 목록이 아님');
@@ -491,7 +497,7 @@
         else {
           // 병합: 동일 ID는 updatedAt 최신 우선, 없으면 기존 유지 + 신규 추가
           next = migrate(_data);
-          ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','inbox','reviews','subjects'].forEach(function (c) {
+          ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','inbox','reviews','subjects'].forEach(function (c) {
             const byId = {};
             (next[c] || []).forEach(function (x) { byId[x.id] = x; });
             (incoming[c] || []).forEach(function (x) {
@@ -514,6 +520,7 @@
           과업: _data.tasks.length, 계획블록: _data.blocks.length, 세션: _data.sessions.length,
           노트: _data.notes.length, 답안: _data.answers.length, 카드: _data.cards.length,
           강좌: _data.courses.length, 과제: _data.assignments.length, 공지: (_data.notices || []).length,
+          강의: (_data.lectures || []).length,
         };
       },
     };
@@ -633,6 +640,7 @@
           id: Store.id('ses'),
           taskId: taskId || null,
           subjectId: subjectId || null,
+          lectureId: opts.lectureId || null,
           title: title || '수험 공부',
           subtitle: opts.subtitle || '',
           goalMin: goalMin,
@@ -683,8 +691,8 @@
         const breakMin = Math.round(totalPauseMs / 60000);
         Store.update(function (d) {
           d.sessions.push({
-            id: s.id, taskId: s.taskId, subjectId: s.subjectId,
-            start: s.start, end: end, breakMin: breakMin, source: 'timer',
+            id: s.id, taskId: s.taskId, subjectId: s.subjectId, lectureId: s.lectureId || null,
+            start: s.start, end: end, breakMin: breakMin, source: s.lectureId ? 'lecture' : 'timer',
           });
         });
         AmbientAudio.stopAll();
@@ -1303,6 +1311,10 @@
     // ② 이어 읽는 서재 — 마지막으로 읽던 노트·과업 재개 카드 (제안서 6·10쪽)
     left.append(buildResumeSection(d, ctx));
 
+    // ②-b 강의 재개 — 이어서 들을 인강 1개만 연결 (제안서 2·6쪽: 홈에는 강의 재개 카드만)
+    const homeLec = pickResumeLecture(d);
+    if (homeLec) left.append(buildHomeLectureResume(d, homeLec, ctx));
+
     // ③ 오늘의 핵심 과업(최대 3)
     const focusTasks = d.focusToday.map(function (id) { return Store.task(id); }).filter(Boolean);
     const focusCard = el('div', { class: 'card' });
@@ -1695,6 +1707,34 @@
       ]));
     });
     wrap.append(grid);
+    return wrap;
+  }
+
+  // 홈: 강의 재개 카드 (제안서 2·6쪽 — 홈에는 '강의 기록으로 이동'만 연결, 자동 재생 아님)
+  function buildHomeLectureResume(d, lec, ctx) {
+    const wrap = el('div', { class: 'card' });
+    wrap.append(el('div', { class: 'section-head' }, [
+      el('h3', {}, '강의 이어서'),
+      el('button', { class: 'section-link', onclick: function () { lectureSelectedId = null; ctx.navigate('lectures'); } }, '강의 학습 →'),
+    ]));
+    const sub = Store.subject(lec.subjectId);
+    const resumeStr = lec.resumeSec ? secToClock(lec.resumeSec) : null;
+    const oq = lectureOpenQuestions(d, lec.id).length;
+    const row = el('div', { class: 'row between', style: 'gap:12px;flex-wrap:wrap' }, [
+      el('div', { style: 'min-width:0;flex:1' }, [
+        el('div', { class: 'row', style: 'gap:6px;margin-bottom:2px' }, [
+          sub ? el('span', { class: 'tag tag-exam' }, sub.name) : '',
+          oq > 0 ? el('span', { class: 'tag tag-warn' }, '미해결 질문 ' + oq + '개') : '',
+        ]),
+        el('div', { style: 'font-weight:700' }, lec.title),
+        el('div', { class: 'hint' }, (lec.nextEpisode ? lec.nextEpisode : lectureStatusLabel(lec.status)) + (resumeStr ? ' · 이어볼 위치 ' + resumeStr : '')),
+      ]),
+      el('div', { class: 'row', style: 'gap:6px' }, [
+        lec.link ? el('a', { class: 'btn btn-sm', href: lec.link, target: '_blank', rel: 'noopener noreferrer', onclick: function () { Store.update(function (dd) { dd.lastLectureResume = lec.id; }); } }, '학원에서 열기 ↗') : null,
+        el('button', { class: 'btn btn-sm btn-primary', onclick: function () { lectureSelectedId = lec.id; lectureTab = 'log'; ctx.navigate('lectures'); } }, '학습 기록 열기'),
+      ]),
+    ]);
+    wrap.append(row);
     return wrap;
   }
 
@@ -2962,6 +3002,29 @@
     subjSel.addEventListener('change', rebuildLinkRow);
     rebuildLinkRow();
 
+    // 강평(강의) 연결 — 감점의 근거가 된 강의 회차·시점을 참조 (제안서 10쪽: answerId↔lectureId↔시점)
+    const lectureLinkWrap = el('div', { class: 'stack', style: 'gap:6px' });
+    function rebuildLectureLink() {
+      lectureLinkWrap.innerHTML = '';
+      const dd = Store.data();
+      const lecSel = el('select', { style: 'flex:1' });
+      lecSel.append(el('option', { value: '' }, '(연결된 강평 없음)'));
+      (dd.lectures || []).forEach(function (lec) {
+        const sub = Store.subject(lec.subjectId);
+        lecSel.append(el('option', { value: lec.id, selected: lec.id === a.lectureId }, (sub ? '[' + sub.name + '] ' : '') + lec.title));
+      });
+      const posInput = el('input', { type: 'text', value: a.lecturePos || '', placeholder: '강평 시점 (예: 25:10)', style: 'flex:0 0 150px' });
+      lecSel.onchange = function () { a.lectureId = lecSel.value || null; };
+      posInput.oninput = function () { a.lecturePos = posInput.value.trim(); };
+      lectureLinkWrap.append(el('div', { class: 'row', style: 'gap:8px' }, [lecSel, posInput]));
+      if ((dd.lectures || []).length === 0) {
+        lectureLinkWrap.append(el('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: function () { persist(); m.close(); ctx.navigate('lectures'); } }, '강의 학습에서 강좌 먼저 등록 →'));
+      } else if (a.lectureId) {
+        lectureLinkWrap.append(el('button', { class: 'btn btn-sm', type: 'button', onclick: function () { persist(); m.close(); lectureSelectedId = a.lectureId; lectureTab = 'log'; ctx.navigate('lectures'); } }, '연결한 강의 열기 ▸'));
+      }
+    }
+    rebuildLectureLink();
+
     const origForCompare = a.rewriteOf ? d.answers.find(function (x) { return x.id === a.rewriteOf; }) : null;
 
     const body = el('div', {}, [
@@ -2974,6 +3037,7 @@
       el('div', { class: 'field' }, [el('label', {}, '문항별 배점 / 득점'), itemsWrap, totalEl, el('button', { class: 'btn btn-sm', style: 'margin-top:8px', type: 'button', onclick: function () { a.items.push({ label: (a.items.length + 1) + '문', score: 0, max: 0 }); renderItems(); } }, '+ 문항 추가')]),
       el('div', { class: 'field' }, [el('label', {}, '감점 원인 태그'), errWrap]),
       el('div', { class: 'field' }, [el('label', {}, '대상 쟁점 및 학습 연결'), issueInput, linkRow]),
+      el('div', { class: 'field' }, [el('label', {}, '강평 연결 (감점 근거가 된 강의 회차·시점)'), lectureLinkWrap]),
       el('div', { class: 'field' }, [el('label', {}, '작성 목차 · 답안 요지'), outlineInput]),
       el('div', { class: 'field' }, [el('label', {}, '채점 코멘트 · 보완 메모'), noteInput]),
     ]);
@@ -2991,6 +3055,7 @@
       a.subjectId = subjSel.value; a.source = sourceInput.value.trim(); a.round = roundInput.value;
       a.date = dateInput.value; a.rewriteDue = rewriteDueInput.value || ''; a.rater = raterSel.value;
       a.draftOutline = outlineInput.value; a.note = noteInput.value; a.issue = issueInput.value.trim();
+      // a.lectureId / a.lecturePos 는 위 select·input의 onchange에서 직접 반영됨
       if (a.scored === undefined) a.scored = true;
       Store.update(function (dd) {
         if (!a.id) { a.id = Store.id('ans'); dd.answers.push(a); }
@@ -4934,6 +4999,670 @@
   }
 
   /* =======================================================================
+     11-b. 강의 학습 (인강) — 들은 내용을 다음 답안으로 (논결 제안서 5~11·13쪽)
+     원칙: 원본(노트·답안·과업·복습)은 기존 기능에 두고, 강의는 출처·학습 맥락을 보태는 항목.
+     외부 수강 기본형(A): 강좌/회차 링크·수동 위치·실제 시간·질문·회상·답안 연결. 자동 재생 연동 아님.
+     ======================================================================= */
+  const LECTURE_STATUSES = [['todo', '미수강'], ['doing', '일부 수강'], ['done', '수강 완료'], ['hold', '보류']];
+  const QUESTION_STATUSES = [['open', '미해결'], ['resolved', '해결'], ['hold', '보류']];
+  let lectureSelectedId = null;
+  let lectureTab = 'log'; // 'log' | 'recall' | 'issues'
+
+  function lectureStatusLabel(s) { const f = LECTURE_STATUSES.find(function (x) { return x[0] === s; }); return f ? f[1] : '미수강'; }
+  function lectureLogsFor(d, lectureId) {
+    return (d.lectureLogs || []).filter(function (l) { return l.lectureId === lectureId; })
+      .sort(function (a, b) { return (b.createdAt || '').localeCompare(a.createdAt || ''); });
+  }
+  function lectureOpenQuestions(d, lectureId) {
+    return lectureLogsFor(d, lectureId).filter(function (l) { return l.kind === 'question' && l.qStatus === 'open'; });
+  }
+  // 강의 학습에 투입한 실제 공부 세션(순공부시간). isExamSession으로 수험 집계 포함 여부는 과목으로 결정.
+  function lectureActualMin(d, lectureId) {
+    return (d.sessions || []).filter(function (s) { return s.lectureId === lectureId; })
+      .reduce(function (sum, s) { return sum + Math.max(0, minutesBetween(s.start, s.end) - (s.breakMin || 0)); }, 0);
+  }
+  // 시청 예상 = max(0, 원본길이 - 확인한 이어볼위치) ÷ 계획 배속 (제안서 11쪽). 값이 없으면 null.
+  function lectureWatchEstMin(lec) {
+    if (!lec || !lec.totalSec) return null;
+    const pos = lec.resumeSec || 0;
+    const speed = lec.playSpeed || 1;
+    const remainSec = Math.max(0, lec.totalSec - pos);
+    return Math.round((remainSec / speed) / 60);
+  }
+  function secToClock(sec) {
+    sec = Math.max(0, Math.round(sec || 0));
+    const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+    if (h) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    return m + ':' + String(s).padStart(2, '0');
+  }
+  function clockToSec(str) {
+    if (!str) return 0;
+    const parts = String(str).trim().split(':').map(Number);
+    if (parts.some(isNaN)) return 0;
+    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    if (parts.length === 2) return parts[0] * 60 + parts[1];
+    return parts[0];
+  }
+
+  function renderLectures(root, ctx) {
+    const d = Store.data();
+    // 선택된 강좌가 있으면 상세(학습 기록) 화면, 없으면 대시보드
+    const sel = lectureSelectedId ? (d.lectures || []).find(function (l) { return l.id === lectureSelectedId; }) : null;
+    if (sel) { renderLectureDetail(root, ctx, sel); return; }
+
+    root.append(el('header', { class: 'page-hero' }, [
+      el('div', {}, [
+        el('div', { class: 'page-eyebrow' }, 'LECTURES INTO ANSWERS'),
+        el('h1', { class: 'page-title' }, '강의 학습'),
+        el('p', { class: 'page-subtitle' }, '듣고 끝내지 않고, 다음 답안까지 연결합니다. 수강 위치·질문을 기록하고 쟁점·강평·재작성으로 잇습니다.'),
+      ]),
+      el('button', { class: 'btn btn-primary', onclick: function () { openLectureEditor(null, ctx); } }, '+ 강좌 등록'),
+    ]));
+
+    if ((d.lectures || []).length === 0) {
+      root.append(el('div', { class: 'empty' }, [
+        el('span', { class: 'emoji' }, '🎧'),
+        el('h3', {}, '아직 등록한 강의가 없습니다'),
+        el('p', {}, '과목·강좌명·학원 링크만으로 작게 시작하세요. 회차·수강기한·완강 목표일은 나중에 채워도 됩니다.'),
+        el('button', { class: 'btn btn-primary', style: 'margin-top:10px', onclick: function () { openLectureEditor(null, ctx); } }, '+ 첫 강좌 등록'),
+      ]));
+      return;
+    }
+
+    // 다음 수강 + 강평 보완 (제안서 6쪽 상단 2분할)
+    const nextLec = pickResumeLecture(d);
+    const feedbackAns = d.answers.filter(function (a) { return (a.errors && a.errors.length) || a.scored === false || a.needRewrite; })
+      .sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); })[0];
+
+    const topGrid = el('div', { class: 'grid grid-2', style: 'margin-bottom:18px' });
+    topGrid.append(buildLectureResumeCard(d, nextLec, ctx));
+    topGrid.append(buildLectureFeedbackCard(d, feedbackAns, ctx));
+    root.append(topGrid);
+
+    // 요약 지표 (이번 주 수강 예정 / 회상 대기 / 답안 연결)
+    let recallWaiting = 0, answerLinked = 0, openQ = 0;
+    (d.lectureLogs || []).forEach(function (l) {
+      if (l.kind === 'recall' && l.recallStatus === 'waiting') recallWaiting++;
+      if (l.kind === 'question' && l.qStatus === 'open') openQ++;
+    });
+    (d.answers || []).forEach(function (a) { if (a.lectureId) answerLinked++; });
+    const metrics = el('div', { class: 'grid grid-3', style: 'margin-bottom:20px' }, [
+      lectureMiniMetric('회상 대기 쟁점', recallWaiting + '개', '수강 완료와 회상은 따로 확인'),
+      lectureMiniMetric('미해결 질문', openQ + '개', '해결·보류로 정리'),
+      lectureMiniMetric('답안으로 연결', answerLinked + '건', '강평 → 재작성 과업'),
+    ]);
+    root.append(metrics);
+
+    // 나의 강좌 목록
+    root.append(el('div', { class: 'section-head', style: 'margin-top:4px' }, [
+      el('h3', {}, '나의 강좌 ' + d.lectures.length + '개'),
+    ]));
+    const list = el('div', { class: 'list' });
+    d.lectures.slice().sort(function (a, b) {
+      const order = { doing: 0, todo: 1, hold: 2, done: 3 };
+      const oa = order[a.status] != null ? order[a.status] : 1;
+      const ob = order[b.status] != null ? order[b.status] : 1;
+      if (oa !== ob) return oa - ob;
+      return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    }).forEach(function (lec) {
+      const sub = Store.subject(lec.subjectId);
+      const progress = (lec.totalEpisodes && lec.doneEpisodes != null)
+        ? lec.doneEpisodes + ' / ' + lec.totalEpisodes + '강'
+        : lectureStatusLabel(lec.status);
+      const oq = lectureOpenQuestions(d, lec.id).length;
+      const recalls = lectureLogsFor(d, lec.id).filter(function (l) { return l.kind === 'recall' && l.recallStatus === 'waiting'; }).length;
+      const stateBadge = recalls > 0
+        ? el('span', { class: 'tag tag-acad' }, '회상 대기 ' + recalls + '개')
+        : oq > 0
+          ? el('span', { class: 'tag tag-warn' }, '미해결 질문 ' + oq + '개')
+          : el('span', { class: 'tag tag-muted' }, lectureStatusLabel(lec.status));
+      list.append(el('div', { class: 'item', style: 'cursor:pointer', onclick: function () { lectureSelectedId = lec.id; lectureTab = 'log'; ctx.refresh(); } }, [
+        el('span', { class: 'tag tag-exam' }, sub ? sub.name : '강의'),
+        el('div', { class: 'main' }, [
+          el('div', { class: 'title' }, lec.title),
+          el('div', { class: 'meta' }, [
+            (lec.teacher ? lec.teacher + ' · ' : '') + (lec.nextEpisode ? lec.nextEpisode + ' · ' : '') + progress,
+          ]),
+        ]),
+        stateBadge,
+        el('span', { class: 'flow-arrow', 'aria-hidden': 'true' }, '→'),
+      ]));
+    });
+    root.append(list);
+    root.append(el('p', { class: 'hint', style: 'margin-top:14px' }, '참고: 강의 메모는 학습 맥락이고, 쟁점의 원본은 단권화 서재 노트에 둡니다. 회상 완료를 숙달로 자동 승격하지 않습니다.'));
+  }
+
+  function lectureMiniMetric(label, value, sub) {
+    return el('div', { class: 'metric' }, [
+      el('div', { class: 'label' }, label),
+      el('div', { class: 'value' }, value),
+      el('div', { class: 'hint' }, sub),
+    ]);
+  }
+
+  // 홈·강의 대시보드 공용: 이어서 수강할 강좌 1개 고르기 (일부 수강 > 미수강, 최근 활동 우선)
+  function pickResumeLecture(d) {
+    const lecs = (d.lectures || []).filter(function (l) { return l.status !== 'done' && l.status !== 'hold'; });
+    if (d.lastLectureResume) {
+      const last = lecs.find(function (l) { return l.id === d.lastLectureResume; });
+      if (last) return last;
+    }
+    return lecs.sort(function (a, b) {
+      const order = { doing: 0, todo: 1 };
+      const oa = order[a.status] != null ? order[a.status] : 1;
+      const ob = order[b.status] != null ? order[b.status] : 1;
+      if (oa !== ob) return oa - ob;
+      return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    })[0] || null;
+  }
+
+  function buildLectureResumeCard(d, lec, ctx) {
+    const card = el('div', { class: 'card', style: 'display:flex;flex-direction:column;gap:10px' });
+    if (!lec) {
+      card.append(
+        el('div', { class: 'page-eyebrow', style: 'margin:0' }, '다음 수강'),
+        el('h2', { style: 'font-family:var(--font-serif);font-size:1.25rem' }, '이어서 들을 강의가 없습니다'),
+        el('p', { class: 'hint', style: 'flex:1' }, '강좌를 등록하면 다음 회차와 이어볼 위치가 여기에 표시됩니다.'),
+        el('button', { class: 'btn btn-primary', onclick: function () { openLectureEditor(null, ctx); } }, '+ 강좌 등록'),
+      );
+      return card;
+    }
+    const sub = Store.subject(lec.subjectId);
+    const watchEst = lectureWatchEstMin(lec);
+    const resumeStr = lec.resumeSec ? secToClock(lec.resumeSec) : null;
+    card.append(
+      el('div', { class: 'row', style: 'gap:6px' }, [
+        el('span', { class: 'tag tag-exam' }, '다음 수강'),
+        sub ? el('span', { class: 'tag tag-muted' }, sub.name) : '',
+      ]),
+      el('h2', { style: 'font-family:var(--font-serif);font-size:1.3rem;margin:0' }, lec.title),
+      el('div', { class: 'hint' }, [
+        (lec.nextEpisode ? lec.nextEpisode : '') + (lec.teacher ? ' · ' + lec.teacher : ''),
+        resumeStr ? el('span', { style: 'display:block;margin-top:2px' }, '이어볼 위치 ' + resumeStr + ' · 학원에서 수동으로 이동') : '',
+      ]),
+      el('div', { class: 'now-study-actions', style: 'display:flex;gap:8px;flex-wrap:wrap;margin-top:4px' }, [
+        lec.link
+          ? el('a', { class: 'btn btn-primary', href: lec.link, target: '_blank', rel: 'noopener noreferrer', onclick: function () { Store.update(function (dd) { dd.lastLectureResume = lec.id; }); } }, '학원에서 열기 ↗')
+          : null,
+        el('button', { class: 'btn', onclick: function () { lectureSelectedId = lec.id; lectureTab = 'log'; ctx.refresh(); } }, '학습 기록 열기'),
+      ]),
+      watchEst != null
+        ? el('div', { class: 'hint', style: 'margin-top:2px' }, '시청 예상 약 ' + watchEst + '분' + (lec.reviewBufferMin ? ' + 복기 여유 ' + lec.reviewBufferMin + '분' : ''))
+        : '',
+    );
+    return card;
+  }
+
+  function buildLectureFeedbackCard(d, ans, ctx) {
+    const card = el('div', { class: 'card', style: 'display:flex;flex-direction:column;gap:10px;background:var(--acad-bg);border-color:color-mix(in srgb, var(--terracotta) 22%, var(--border))' });
+    card.append(el('div', { class: 'page-eyebrow', style: 'margin:0;color:var(--acad-fg)' }, '강평에서 다시 쓸 답안으로'));
+    if (!ans) {
+      card.append(
+        el('h2', { style: 'font-family:var(--font-serif);font-size:1.25rem;margin:0' }, '보완할 강평이 없습니다'),
+        el('p', { class: 'hint', style: 'flex:1' }, '답안 연습에서 감점을 기록하면, 해당 강평 회차와 재작성으로 바로 이동할 수 있습니다.'),
+        el('button', { class: 'btn', style: 'background:var(--surface)', onclick: function () { ctx.navigate('answers'); } }, '답안 연습 열기'),
+      );
+      return card;
+    }
+    const sub = Store.subject(ans.subjectId);
+    const dedLabel = (ans.errors && ans.errors.length ? ans.errors.join(', ') : '') || ans.note || '보완 필요';
+    const aTitle = (ans.source || '답안 연습') + (ans.round ? ' ' + ans.round + '회' : '');
+    card.append(
+      el('h2', { style: 'font-family:var(--font-serif);font-size:1.3rem;margin:0;color:var(--text)' }, (sub ? '[' + sub.name + '] ' : '') + aTitle),
+      el('div', { style: 'color:var(--acad-fg);font-size:.9rem;font-weight:600' }, '감점: ' + dedLabel.slice(0, 48)),
+      el('p', { class: 'hint', style: 'flex:1' }, '보완 쟁점을 확인하고 한 문단 재작성으로 연결하세요.'),
+      el('button', { class: 'btn btn-primary', onclick: function () { ctx.navigate('answers'); } }, '강평과 답안 연결 보기'),
+    );
+    return card;
+  }
+
+  // 강좌 상세 = 시안 2 외부 수강 학습 기록 (좌: 수강 정보, 우: 기록/회상/연결 쟁점 탭)
+  function renderLectureDetail(root, ctx, lec) {
+    const d = Store.data();
+    const sub = Store.subject(lec.subjectId);
+
+    root.append(el('div', { class: 'row', style: 'gap:8px;margin-bottom:6px' }, [
+      el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { lectureSelectedId = null; ctx.refresh(); } }, '← 강의 목록'),
+    ]));
+    root.append(el('header', { class: 'page-hero' }, [
+      el('div', {}, [
+        el('div', { class: 'page-eyebrow' }, 'LEARNING COMPANION'),
+        el('h1', { class: 'page-title' }, lec.title),
+        el('p', { class: 'page-subtitle' }, [
+          (sub ? sub.name + ' · ' : '') + (lec.nextEpisode ? lec.nextEpisode + ' · ' : '') + lectureStatusLabel(lec.status),
+        ]),
+      ]),
+      el('div', { class: 'row', style: 'gap:8px' }, [
+        el('button', { class: 'btn btn-sm', onclick: function () { openLectureEditor(lec, ctx); } }, '강좌 편집'),
+      ]),
+    ]));
+
+    const grid = el('div', { class: 'grid grid-7to3' });
+    const leftWrap = el('div', { class: 'stack', style: 'gap:16px' });
+    leftWrap.append(buildLectureInfoCard(d, lec, ctx));
+    grid.append(buildLectureRecordPane(d, lec, ctx));
+    grid.append(leftWrap);
+    // grid-7to3: 첫 자식이 넓은 영역 → 기록 패널을 넓게, 수강 정보를 우측에
+    root.append(grid);
+  }
+
+  // 좌측(넓은 영역): 강의 기록 / 회상 / 연결한 쟁점 탭
+  function buildLectureRecordPane(d, lec, ctx) {
+    const wrap = el('div', { class: 'stack', style: 'gap:14px' });
+
+    const tabs = el('div', { class: 'tabs', role: 'tablist' });
+    [['log', '강의 기록'], ['recall', '회상'], ['issues', '연결한 쟁점']].forEach(function (p) {
+      tabs.append(el('button', {
+        class: 'tab', role: 'tab', 'aria-selected': String(lectureTab === p[0]),
+        onclick: function () { lectureTab = p[0]; ctx.refresh(); },
+      }, p[1]));
+    });
+    wrap.append(tabs);
+
+    if (lectureTab === 'log') wrap.append(buildLectureLogTab(d, lec, ctx));
+    else if (lectureTab === 'recall') wrap.append(buildLectureRecallTab(d, lec, ctx));
+    else wrap.append(buildLectureIssuesTab(d, lec, ctx));
+    return wrap;
+  }
+
+  function buildLectureLogTab(d, lec, ctx) {
+    const card = el('div', { class: 'card', style: 'display:flex;flex-direction:column;gap:12px' });
+    card.append(el('div', { class: 'section-head' }, [
+      el('h3', {}, '빠른 기록'),
+      el('span', { class: 'hint' }, '쪽수·타임스탬프가 없어도 저장됩니다'),
+    ]));
+
+    // 빠른 질문/메모 입력 (제안서 7쪽: 시점 + 짧은 메모)
+    const posInput = el('input', { type: 'text', placeholder: '시점 (예: 23:40, 선택)', style: 'flex:0 0 150px' });
+    const kindSel = el('select', { style: 'flex:0 0 120px' });
+    [['question', '미해결 질문'], ['memo', '메모']].forEach(function (p) { kindSel.append(el('option', { value: p[0] }, p[1])); });
+    const bodyInput = el('textarea', { rows: '2', placeholder: '놓친 질문이나 이해한 설명을 짧게. (예: 목차의 순서를 사례의 사실관계에 어떻게 연결할까?)' });
+    const pageInput = el('input', { type: 'text', placeholder: '교재 쪽수 (예: p.142, 선택)', style: 'flex:1' });
+
+    card.append(
+      el('div', { class: 'row', style: 'gap:8px;align-items:flex-start' }, [posInput, kindSel]),
+      bodyInput,
+      el('div', { class: 'row', style: 'gap:8px' }, [
+        pageInput,
+        el('button', { class: 'btn btn-primary', onclick: function () {
+          const text = bodyInput.value.trim();
+          if (!text) { ctx.toast('내용을 입력하세요.', 'warn'); return; }
+          Store.update(function (dd) {
+            dd.lectureLogs.push({
+              id: Store.id('llog'), lectureId: lec.id, kind: kindSel.value,
+              posSec: clockToSec(posInput.value), posRaw: posInput.value.trim(),
+              page: pageInput.value.trim(), body: text,
+              qStatus: kindSel.value === 'question' ? 'open' : null,
+              issue: '', noteId: null, createdAt: new Date().toISOString(),
+            });
+            const lx = dd.lectures.find(function (x) { return x.id === lec.id; });
+            if (lx) { lx.updatedAt = new Date().toISOString(); if (lx.status === 'todo') lx.status = 'doing'; }
+          });
+          ctx.refresh();
+          ctx.toast('기록을 저장했습니다.');
+        } }, '기록 저장'),
+      ]),
+    );
+
+    // 기록 목록
+    const logs = lectureLogsFor(d, lec.id).filter(function (l) { return l.kind === 'question' || l.kind === 'memo'; });
+    if (logs.length === 0) {
+      card.append(el('p', { class: 'hint', style: 'margin-top:4px' }, '아직 기록이 없습니다. 수강 중 떠오른 질문이나 요지를 한 줄씩 남겨 보세요.'));
+    } else {
+      const list = el('div', { class: 'list', style: 'margin-top:4px' });
+      logs.forEach(function (l) { list.append(buildLectureLogRow(d, lec, l, ctx)); });
+      card.append(list);
+    }
+    return card;
+  }
+
+  function buildLectureLogRow(d, lec, l, ctx) {
+    const tags = [];
+    if (l.posRaw) tags.push(el('span', { class: 'tag tag-muted' }, l.posRaw));
+    if (l.page) tags.push(el('span', { class: 'tag tag-muted' }, l.page));
+    if (l.kind === 'question') {
+      const qs = QUESTION_STATUSES.find(function (x) { return x[0] === l.qStatus; });
+      tags.push(el('span', { class: 'tag ' + (l.qStatus === 'open' ? 'tag-warn' : 'tag-exam') }, qs ? qs[1] : '질문'));
+    }
+    const row = el('div', { class: 'item', style: 'align-items:flex-start' });
+    const main = el('div', { class: 'main' }, [
+      el('div', { class: 'row', style: 'gap:6px;margin-bottom:4px' }, tags),
+      el('div', { class: 'title', style: 'font-weight:600;white-space:pre-wrap' }, l.body),
+      l.issue ? el('div', { class: 'meta' }, '연결 쟁점: ' + l.issue) : null,
+    ]);
+    const actions = el('div', { class: 'row', style: 'gap:4px;flex-wrap:wrap' });
+    if (l.kind === 'question') {
+      actions.append(el('button', {
+        class: 'btn btn-sm', title: '미해결/해결 전환',
+        onclick: function () {
+          Store.update(function (dd) {
+            const lx = dd.lectureLogs.find(function (x) { return x.id === l.id; });
+            if (lx) lx.qStatus = lx.qStatus === 'open' ? 'resolved' : 'open';
+          });
+          ctx.refresh();
+        },
+      }, l.qStatus === 'open' ? '해결 표시' : '미해결로'));
+    }
+    actions.append(el('button', {
+      class: 'btn btn-sm', title: '기존 서재 노트와 연결하거나 새 노트로 보냅니다',
+      onclick: function () { openLectureLogLinkModal(d, lec, l, ctx); },
+    }, '쟁점 연결'));
+    actions.append(el('button', {
+      class: 'btn btn-sm btn-ghost', 'aria-label': '기록 삭제',
+      onclick: function () { Store.update(function (dd) { dd.lectureLogs = dd.lectureLogs.filter(function (x) { return x.id !== l.id; }); }); ctx.refresh(); },
+    }, '✕'));
+    row.append(main, actions);
+    return row;
+  }
+
+  // 강의 기록 → 기존 쟁점 노트 연결 (제안서 3·5·9쪽: 새 노트 중복 생성 없이 서재에서 역으로 찾기)
+  function openLectureLogLinkModal(d, lec, l, ctx) {
+    const sameSubjectNotes = d.notes.filter(function (n) { return n.subjectId === lec.subjectId; });
+    const body = el('div', { class: 'stack' });
+    body.append(el('p', { class: 'hint' }, '이 강의 기록을 기존 서재 노트의 쟁점에 연결합니다. 원본 정리는 노트에 두고, 강의는 출처로만 남깁니다.'));
+
+    const issueInput = el('input', { type: 'text', value: l.issue || '', placeholder: '쟁점명 (예: 진보성 판단)' });
+    body.append(el('div', { class: 'field' }, [el('label', {}, '쟁점'), issueInput]));
+
+    if (sameSubjectNotes.length) {
+      const noteSel = el('select', {});
+      noteSel.append(el('option', { value: '' }, '(연결할 기존 노트 선택)'));
+      sameSubjectNotes.forEach(function (n) { noteSel.append(el('option', { value: n.id, selected: n.id === l.noteId }, (n.title || n.issue || '노트') + (n.issue ? ' · ' + n.issue : ''))); });
+      noteSel.onchange = function () {
+        const n = Store.note(noteSel.value);
+        if (n && n.issue && !issueInput.value.trim()) issueInput.value = n.issue;
+      };
+      body.append(el('div', { class: 'field' }, [el('label', {}, '기존 서재 노트'), noteSel]));
+      body.dataset.hasNoteSel = '1';
+      var _noteSel = noteSel;
+    }
+
+    const footer = [
+      el('button', { class: 'btn', onclick: function () { m.close(); } }, '취소'),
+      el('button', { class: 'btn', onclick: function () {
+        // 새 노트로 보내기 (서재에 쟁점 노트 생성)
+        const issue = issueInput.value.trim();
+        if (!issue) { ctx.toast('쟁점명을 입력하세요.', 'warn'); return; }
+        const existing = d.notes.find(function (n) { return n.subjectId === lec.subjectId && n.issue && n.issue.trim() === issue; });
+        if (existing) {
+          linkLogToNote(l, existing.id, issue, ctx);
+          m.close(); openNoteById(existing.id, ctx);
+          ctx.toast('이미 있는 쟁점 노트에 연결했습니다.');
+          return;
+        }
+        const nn = { id: Store.id('note'), title: issue, subjectId: lec.subjectId, unit: '', issue: issue, importance: 2, status: 'todo', appliedDate: '', body: (l.body ? '[강의 메모] ' + l.body + '\n' : ''), checkQuestion: '', answerFlow: '', source: { ref: lec.title + (l.posRaw ? ' ' + l.posRaw : ''), caseId: '', page: l.page || '', url: lec.link || '', checkedDate: '', excerpt: '' }, linkedAnswers: [], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), versions: [] };
+        Store.update(function (dd) { dd.notes.push(nn); dd.lastOpenNote = nn.id; });
+        linkLogToNote(l, nn.id, issue, ctx);
+        m.close(); openNoteById(nn.id, ctx);
+        ctx.toast('이 쟁점의 서재 노트를 만들어 연결했습니다.');
+      } }, '새 쟁점 노트로 보내기'),
+      el('button', { class: 'btn btn-primary', onclick: function () {
+        const issue = issueInput.value.trim();
+        const noteId = (typeof _noteSel !== 'undefined' && _noteSel.value) ? _noteSel.value : null;
+        if (!noteId && !issue) { ctx.toast('기존 노트를 고르거나 쟁점명을 입력하세요.', 'warn'); return; }
+        linkLogToNote(l, noteId, issue, ctx);
+        m.close(); ctx.refresh();
+        ctx.toast('강의 기록을 쟁점에 연결했습니다.');
+      } }, '연결 저장'),
+    ];
+    var m = ctx.modal({ title: '기존 쟁점 노트에 연결', body: body, footer: footer });
+  }
+  function linkLogToNote(l, noteId, issue, ctx) {
+    Store.update(function (dd) {
+      const lx = dd.lectureLogs.find(function (x) { return x.id === l.id; });
+      if (lx) { lx.noteId = noteId || null; lx.issue = issue || lx.issue || ''; }
+    });
+  }
+
+  // 회상 탭 (제안서 5·7·8쪽: 수강 완료와 회상 상태 분리. 내 문장 작성 후 기존 기록 확인)
+  function buildLectureRecallTab(d, lec, ctx) {
+    const card = el('div', { class: 'card', style: 'display:flex;flex-direction:column;gap:12px' });
+    card.append(el('div', { class: 'section-head' }, [el('h3', {}, '듣고, 내 말로'), el('span', { class: 'hint' }, '자료를 보지 않고 설명해 보세요')]));
+
+    const promptInput = el('input', { type: 'text', placeholder: '회상 질문 (예: 일반론을 쓴 다음, 사안 포섭에서 무엇을 확인할까?)' });
+    const recallInput = el('textarea', { rows: '3', placeholder: '나의 회상 한 문장…' });
+    card.append(
+      el('div', { class: 'field', style: 'margin:0' }, [el('label', {}, '회상 질문'), promptInput]),
+      el('div', { class: 'field', style: 'margin:0' }, [el('label', {}, '내 문장'), recallInput]),
+      el('div', { class: 'row', style: 'gap:8px' }, [
+        el('button', { class: 'btn btn-primary', onclick: function () {
+          const prompt = promptInput.value.trim();
+          if (!prompt && !recallInput.value.trim()) { ctx.toast('회상 질문이나 내 문장을 입력하세요.', 'warn'); return; }
+          Store.update(function (dd) {
+            dd.lectureLogs.push({
+              id: Store.id('llog'), lectureId: lec.id, kind: 'recall',
+              prompt: prompt, body: recallInput.value.trim(),
+              recallStatus: 'waiting', issue: '', noteId: null, createdAt: new Date().toISOString(),
+            });
+            const lx = dd.lectures.find(function (x) { return x.id === lec.id; });
+            if (lx) lx.updatedAt = new Date().toISOString();
+          });
+          ctx.refresh(); ctx.toast('회상을 저장했습니다. 확인 후 다음 행동을 고르세요.');
+        } }, '회상 저장'),
+      ]),
+    );
+
+    const recalls = lectureLogsFor(d, lec.id).filter(function (l) { return l.kind === 'recall'; });
+    if (recalls.length === 0) {
+      card.append(el('p', { class: 'hint', style: 'margin-top:4px' }, '수강을 마친 뒤, 자료를 덮고 한 문장으로 설명을 남겨 보세요. 회상 완료를 숙달로 자동 처리하지 않습니다.'));
+    } else {
+      const list = el('div', { class: 'list', style: 'margin-top:4px' });
+      recalls.forEach(function (l) {
+        const waiting = l.recallStatus === 'waiting';
+        const row = el('div', { class: 'item', style: 'align-items:flex-start' });
+        row.append(
+          el('div', { class: 'main' }, [
+            el('div', { class: 'row', style: 'gap:6px;margin-bottom:4px' }, [
+              el('span', { class: 'tag ' + (waiting ? 'tag-acad' : 'tag-exam') }, waiting ? '회상 대기' : '회상 완료'),
+            ]),
+            l.prompt ? el('div', { class: 'title', style: 'font-weight:600' }, l.prompt) : null,
+            l.body ? el('div', { class: 'meta', style: 'white-space:pre-wrap' }, '내 문장: ' + l.body) : null,
+          ]),
+          el('div', { class: 'row', style: 'gap:4px;flex-wrap:wrap' }, [
+            el('button', { class: 'btn btn-sm', onclick: function () {
+              Store.update(function (dd) { const lx = dd.lectureLogs.find(function (x) { return x.id === l.id; }); if (lx) lx.recallStatus = waiting ? 'done' : 'waiting'; });
+              ctx.refresh();
+            } }, waiting ? '확인 완료' : '다시 대기'),
+            el('button', { class: 'btn btn-sm', title: '이 회상을 복습 카드로 보냅니다', onclick: function () {
+              Store.update(function (dd) {
+                dd.cards.push({ id: Store.id('card'), q: l.prompt || (lec.title + ' 회상'), a: l.body || '', subjectId: lec.subjectId, noteId: l.noteId || null, issue: l.issue || '', status: (l.body ? 'active' : 'draft'), nextReview: todayKey(), interval: 1, reps: 0, verified: false, lectureId: lec.id, createdAt: new Date().toISOString() });
+              });
+              ctx.toast('복습 카드로 보냈습니다.');
+            } }, '복습 카드로'),
+            el('button', { class: 'btn btn-sm btn-ghost', 'aria-label': '회상 삭제', onclick: function () { Store.update(function (dd) { dd.lectureLogs = dd.lectureLogs.filter(function (x) { return x.id !== l.id; }); }); ctx.refresh(); } }, '✕'),
+          ]),
+        );
+        list.append(row);
+      });
+      card.append(list);
+    }
+    return card;
+  }
+
+  // 연결한 쟁점 탭: 이 강의가 연결된 노트·답안·복습 카드를 한눈에
+  function buildLectureIssuesTab(d, lec, ctx) {
+    const card = el('div', { class: 'card', style: 'display:flex;flex-direction:column;gap:14px' });
+    card.append(el('div', { class: 'section-head' }, [el('h3', {}, '이 강의가 연결된 곳')]));
+
+    const linkedNoteIds = {};
+    lectureLogsFor(d, lec.id).forEach(function (l) { if (l.noteId) linkedNoteIds[l.noteId] = true; });
+    const notes = Object.keys(linkedNoteIds).map(function (id) { return Store.note(id); }).filter(Boolean);
+    const linkedAnswers = (d.answers || []).filter(function (a) { return a.lectureId === lec.id; });
+    const linkedCards = (d.cards || []).filter(function (c) { return c.lectureId === lec.id; });
+
+    const sec = function (title, items, emptyMsg, onItem) {
+      const box = el('div', { class: 'stack', style: 'gap:6px' }, [el('strong', {}, title + ' (' + items.length + ')')]);
+      if (items.length === 0) box.append(el('p', { class: 'hint' }, emptyMsg));
+      else items.forEach(function (it) { box.append(onItem(it)); });
+      return box;
+    };
+
+    card.append(sec('연결된 서재 노트', notes, '강의 기록의 "쟁점 연결"로 노트와 이으면 여기 모입니다.', function (n) {
+      const sub = Store.subject(n.subjectId);
+      return el('button', { type: 'button', class: 'item', style: 'text-align:left;cursor:pointer;width:100%', onclick: function () { openNoteById(n.id, ctx); } }, [
+        el('div', { class: 'main' }, [el('div', { class: 'title' }, n.title || n.issue || '노트'), el('div', { class: 'meta' }, (sub ? sub.name + ' · ' : '') + (n.issue || '쟁점 미지정'))]),
+        el('span', { class: 'hint' }, '열기 →'),
+      ]);
+    }));
+
+    card.append(sec('연결된 답안(강평)', linkedAnswers, '답안 연습에서 이 강의를 강평으로 연결하면 여기 표시됩니다.', function (a) {
+      const sub = Store.subject(a.subjectId);
+      return el('button', { type: 'button', class: 'item', style: 'text-align:left;cursor:pointer;width:100%', onclick: function () { ctx.navigate('answers'); } }, [
+        el('div', { class: 'main' }, [el('div', { class: 'title' }, (sub ? '[' + sub.name + '] ' : '') + (a.source || '답안') + (a.round ? ' ' + a.round + '회' : '')), el('div', { class: 'meta' }, (a.errors && a.errors.length ? '감점: ' + a.errors.join(', ') : '강평 연결'))]),
+        el('span', { class: 'hint' }, '답안 →'),
+      ]);
+    }));
+
+    card.append(sec('연결된 복습 카드', linkedCards, '회상을 복습 카드로 보내면 여기 모입니다.', function (c) {
+      return el('button', { type: 'button', class: 'item', style: 'text-align:left;cursor:pointer;width:100%', onclick: function () { ctx.navigate('review'); } }, [
+        el('div', { class: 'main' }, [el('div', { class: 'title' }, c.q || '복습 카드'), el('div', { class: 'meta' }, c.issue || '쟁점')]),
+        el('span', { class: 'hint' }, '복습 →'),
+      ]);
+    }));
+
+    return card;
+  }
+
+  // 우측: 수강 정보 (외부 수강 안내 · 학원 열기 · 이어볼 위치 · 실제 투입 시간)
+  function buildLectureInfoCard(d, lec, ctx) {
+    const card = el('div', { class: 'card', style: 'display:flex;flex-direction:column;gap:12px' });
+    card.append(el('div', { class: 'row between' }, [el('h3', { style: 'margin:0' }, '수강 정보'), el('span', { class: 'tag tag-muted' }, '외부 수강')]));
+
+    card.append(el('div', { style: 'padding:12px 14px;border-radius:10px;background:var(--exam-bg)' }, [
+      el('div', { style: 'font-weight:600;font-size:.88rem;color:var(--exam-fg)' }, '영상은 학원에서 재생합니다'),
+      el('p', { class: 'hint', style: 'margin:4px 0 0' }, '이곳에서는 재생 위치와 학습 내용을 기록합니다. 자동 진도 연동은 지원하지 않습니다.'),
+    ]));
+
+    if (lec.link) {
+      card.append(el('a', { class: 'btn btn-primary btn-block', href: lec.link, target: '_blank', rel: 'noopener noreferrer', onclick: function () { Store.update(function (dd) { dd.lastLectureResume = lec.id; }); } }, '학원에서 열기 ↗'));
+    } else {
+      card.append(el('button', { class: 'btn btn-block', onclick: function () { openLectureEditor(lec, ctx); } }, '강좌 링크 추가'));
+    }
+
+    // 이어볼 위치 (직접 확인하여 입력)
+    const resumeInput = el('input', { type: 'text', value: lec.resumeSec ? secToClock(lec.resumeSec) : '', placeholder: '예: 23:40' });
+    card.append(el('div', {}, [
+      el('label', {}, '이어볼 위치 (직접 확인)'),
+      el('div', { class: 'row', style: 'gap:8px' }, [
+        resumeInput,
+        el('button', { class: 'btn btn-sm', onclick: function () {
+          Store.update(function (dd) { const lx = dd.lectures.find(function (x) { return x.id === lec.id; }); if (lx) { lx.resumeSec = clockToSec(resumeInput.value); lx.updatedAt = new Date().toISOString(); } });
+          ctx.refresh(); ctx.toast('이어볼 위치를 기록했습니다.');
+        } }, '위치 기록'),
+      ]),
+      el('p', { class: 'hint', style: 'margin-top:4px' }, '학원 플레이어의 시간을 직접 입력합니다. 질문 시점과는 별도로 보관됩니다.'),
+    ]));
+
+    // 실제 투입 시간 — 집중 타이머와 연동 (source: 'lecture')
+    const running = Timer.current();
+    const isThisRunning = running && running.lectureId === lec.id;
+    const actualMin = lectureActualMin(d, lec.id);
+    card.append(el('div', { style: 'border-top:1px solid var(--border);padding-top:10px' }, [
+      el('label', {}, '실제 투입 시간 (순공부)'),
+      el('div', { style: 'font-family:var(--font-serif);font-size:1.5rem;font-weight:700' }, fmtMin(actualMin)),
+      isThisRunning
+        ? el('button', { class: 'btn btn-primary btn-block', style: 'margin-top:6px', onclick: function () { Timer.openOverlay(); } }, '▶ 집중 화면 열기 (기록 중)')
+        : el('button', { class: 'btn btn-block', style: 'margin-top:6px', onclick: function () {
+            Timer.start(null, lec.subjectId, lec.title + (lec.nextEpisode ? ' · ' + lec.nextEpisode : ''), { subtitle: '강의 수강', lectureId: lec.id });
+            Store.update(function (dd) { dd.lastLectureResume = lec.id; });
+            ctx.refresh();
+          } }, '▶ 수강 시간 기록 시작'),
+      el('p', { class: 'hint', style: 'margin-top:4px' }, '학원으로 이동해도 기록은 유지됩니다. 탭을 떠났다고 시청 완료로 처리하지 않습니다.'),
+    ]));
+
+    // 상태 전환
+    const statusSel = el('select', {});
+    LECTURE_STATUSES.forEach(function (p) { statusSel.append(el('option', { value: p[0], selected: p[0] === lec.status }, p[1])); });
+    statusSel.onchange = function () {
+      Store.update(function (dd) { const lx = dd.lectures.find(function (x) { return x.id === lec.id; }); if (lx) { lx.status = statusSel.value; lx.updatedAt = new Date().toISOString(); } });
+      ctx.refresh();
+    };
+    card.append(el('div', { style: 'border-top:1px solid var(--border);padding-top:10px' }, [
+      el('label', {}, '수강 상태'), statusSel,
+      el('p', { class: 'hint', style: 'margin-top:4px' }, '수강 완료로 바꿔도 회상은 대기로 남으며 실패로 표시하지 않습니다.'),
+    ]));
+
+    return card;
+  }
+
+  // 강좌 등록·편집 (제안서 5·9쪽: 작게 시작 — 과목·강좌명·링크만 필수)
+  function openLectureEditor(lec, ctx) {
+    const d = Store.data();
+    const isNew = !(lec && lec.id);
+    const l = lec ? JSON.parse(JSON.stringify(lec)) : {
+      id: null, title: '', subjectId: (d.subjects[0] && d.subjects[0].id) || '', teacher: '', academy: '', link: '',
+      nextEpisode: '', totalEpisodes: null, doneEpisodes: 0, status: 'todo',
+      totalSec: null, resumeSec: 0, playSpeed: 1, reviewBufferMin: 15, deadline: '', goalDate: '',
+      createdAt: null, updatedAt: null,
+    };
+
+    const title = el('input', { type: 'text', value: l.title, placeholder: '강좌명 (예: 민사소송법 사례 강의)' });
+    const subjSel = el('select', {}); d.subjects.forEach(function (s) { subjSel.append(el('option', { value: s.id, selected: s.id === l.subjectId }, s.name)); });
+    const teacher = el('input', { type: 'text', value: l.teacher || '', placeholder: '강사 (선택)' });
+    const academy = el('input', { type: 'text', value: l.academy || '', placeholder: '학원 (선택)' });
+    const link = el('input', { type: 'text', value: l.link || '', placeholder: '학원 강좌 페이지 URL (선택)' });
+    const nextEpisode = el('input', { type: 'text', value: l.nextEpisode || '', placeholder: '예: 12강 · 목차와 사안의 연결' });
+    const doneEp = el('input', { type: 'number', value: l.doneEpisodes || 0, min: '0', style: 'flex:1' });
+    const totalEp = el('input', { type: 'number', value: l.totalEpisodes || '', min: '0', placeholder: '총 강수', style: 'flex:1' });
+    const totalLen = el('input', { type: 'text', value: l.totalSec ? secToClock(l.totalSec) : '', placeholder: '예: 60:00 (선택)' });
+    const speed = el('select', {}); [[1, '1.0배'], [1.2, '1.2배'], [1.5, '1.5배'], [1.8, '1.8배'], [2, '2.0배']].forEach(function (p) { speed.append(el('option', { value: String(p[0]), selected: Number(l.playSpeed) === p[0] }, p[1])); });
+    const buffer = el('input', { type: 'number', value: l.reviewBufferMin != null ? l.reviewBufferMin : 15, min: '0', step: '5' });
+    const deadline = el('input', { type: 'date', value: l.deadline || '' });
+    const goalDate = el('input', { type: 'date', value: l.goalDate || '' });
+
+    const body = el('div', {}, [
+      el('div', { class: 'field' }, [el('label', {}, '강좌명 *'), title]),
+      el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '과목 *'), subjSel]), el('div', { class: 'field' }, [el('label', {}, '강사'), teacher])]),
+      el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '학원'), academy]), el('div', { class: 'field' }, [el('label', {}, '강좌 링크'), link])]),
+      el('div', { class: 'field' }, [el('label', {}, '다음 회차 (선택)'), nextEpisode]),
+      el('div', { class: 'field' }, [el('label', {}, '수강 진행 (수강/총 강수, 선택)'), el('div', { class: 'row', style: 'gap:8px' }, [doneEp, el('span', {}, '/'), totalEp])]),
+      el('details', { style: 'margin-bottom:8px' }, [
+        el('summary', { class: 'hint', style: 'cursor:pointer' }, '수강 계획 상세 (시청 예상·배속·여유·기한 — 선택)'),
+        el('div', { style: 'margin-top:10px' }, [
+          el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '1강 길이'), totalLen]), el('div', { class: 'field' }, [el('label', {}, '계획 배속'), speed])]),
+          el('div', { class: 'field-row' }, [el('div', { class: 'field' }, [el('label', {}, '복기 여유(분)'), buffer]), el('div', { class: 'field' }, [el('label', {}, '수강기한'), deadline])]),
+          el('div', { class: 'field' }, [el('label', {}, '완강 목표일 (수강기한과 다를 수 있음)'), goalDate]),
+        ]),
+      ]),
+      el('p', { class: 'hint' }, '강좌명·과목만으로 바로 시작할 수 있습니다. 완강 압박 없이 참고만 하는 강좌도 보관할 수 있어요.'),
+    ]);
+
+    const footer = [
+      !isNew ? el('button', { class: 'btn btn-danger', onclick: function () {
+        Store.update(function (dd) {
+          dd.lectures = dd.lectures.filter(function (x) { return x.id !== l.id; });
+          // 강의는 삭제해도 연결된 노트·답안·복습은 보존 (제안서 13쪽: 내용·이력·연결 보존)
+          (dd.lectureLogs || []).forEach(function (lg) { if (lg.lectureId === l.id) lg.lectureOrphan = true; });
+          dd.lectureLogs = dd.lectureLogs.filter(function (lg) { return lg.lectureId !== l.id; });
+          if (dd.lastLectureResume === l.id) dd.lastLectureResume = null;
+        });
+        m.close(); lectureSelectedId = null; ctx.refresh(); ctx.toast('강좌를 삭제했습니다. 연결된 노트·답안·복습 카드는 보존됩니다.');
+      } }, '삭제') : null,
+      el('span', { class: 'spacer' }),
+      el('button', { class: 'btn', onclick: function () { m.close(); } }, '취소'),
+      el('button', { class: 'btn btn-primary', onclick: function () {
+        if (!title.value.trim()) { ctx.toast('강좌명을 입력하세요.', 'warn'); return; }
+        l.title = title.value.trim(); l.subjectId = subjSel.value; l.teacher = teacher.value.trim(); l.academy = academy.value.trim();
+        l.link = link.value.trim(); l.nextEpisode = nextEpisode.value.trim();
+        l.doneEpisodes = clampNum(doneEp.value, 0, 9999);
+        l.totalEpisodes = totalEp.value ? clampNum(totalEp.value, 0, 9999) : null;
+        l.totalSec = totalLen.value ? clockToSec(totalLen.value) : null;
+        l.playSpeed = Number(speed.value) || 1;
+        l.reviewBufferMin = clampNum(buffer.value, 0, 600);
+        l.deadline = deadline.value || ''; l.goalDate = goalDate.value || '';
+        Store.update(function (dd) {
+          if (isNew) { l.id = Store.id('lec'); l.createdAt = new Date().toISOString(); l.updatedAt = l.createdAt; dd.lectures.push(l); dd.lastLectureResume = l.id; }
+          else { l.updatedAt = new Date().toISOString(); const x = dd.lectures.find(function (z) { return z.id === l.id; }); if (x) Object.assign(x, l); }
+        });
+        m.close();
+        if (isNew) { lectureSelectedId = l.id; lectureTab = 'log'; }
+        ctx.refresh(); ctx.toast(isNew ? '강좌를 등록했습니다.' : '강좌를 저장했습니다.');
+      } }, '저장'),
+    ];
+    const m = ctx.modal({ title: isNew ? '강좌 등록' : '강좌 편집', body: body, footer: footer });
+  }
+
+  /* =======================================================================
      12. 기록과 회고 (보고서 3·7쪽)
      ======================================================================= */
   function renderReviewLog(root, ctx) {
@@ -5582,6 +6311,7 @@
     notes:    { title: '단권화 서재',   render: renderNotes },
     review:   { title: '복습 카드',     render: renderReview },
     academic: { title: '대학 학업',     render: renderAcademic },
+    lectures: { title: '강의 학습',     render: renderLectures },
     log:      { title: '학습 기록',     render: renderReviewLog },
     ai:       { title: 'AI 도구',       render: renderAiTools },
     settings: { title: '설정과 데이터', render: renderSettings },
@@ -5626,7 +6356,7 @@
     document.querySelectorAll('.nav-item[data-route]').forEach(function (b) {
       b.setAttribute('aria-current', b.dataset.route === current ? 'page' : 'false');
     });
-    const moreRoutes = ['tasks', 'answers', 'notes', 'academic', 'log', 'ai', 'settings'];
+    const moreRoutes = ['tasks', 'answers', 'notes', 'academic', 'lectures', 'log', 'ai', 'settings'];
     document.querySelectorAll('.mob-tab[data-mob-route]').forEach(function (b) {
       const r = b.dataset.mobRoute;
       const active = r === 'more' ? (moreRoutes.indexOf(current) >= 0) : (r === current);
@@ -5720,6 +6450,7 @@
     navItem(nav, 'notes', '단권화 서재', 'notes');
     navItem(nav, 'review', '복습 카드', 'review');
     nav.append(el('hr', { class: 'nav-sep' }), el('div', { class: 'nav-group-label' }, '학업과 기록'));
+    navItem(nav, 'lectures', '강의 학습', 'lecture');
     navItem(nav, 'academic', '대학 학업', 'academic');
     navItem(nav, 'log', '학습 기록', 'log');
     navItem(nav, 'ai', 'AI 도구', 'ai');
