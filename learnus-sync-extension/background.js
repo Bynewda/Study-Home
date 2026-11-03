@@ -314,6 +314,8 @@ async function collectFromLearnUsTab() {
               var dCand = parseDateStr(bCells[bci].textContent, false);
               if (dCand) { nDate = dCand; break; }
             }
+            var noticeTime = Date.parse(nDate + 'T00:00:00+09:00');
+            if (!Number.isFinite(noticeTime) || noticeTime <= Date.now() - 7 * 24 * 60 * 60 * 1000) continue;
             var nKey = 'lu-ntc-' + crs.luId + '-' + artId;
             if (!ntcMap[nKey]) {
               ntcMap[nKey] = {
@@ -321,7 +323,7 @@ async function collectFromLearnUsTab() {
                 luCourseId: crs.luId,
                 courseName: crs.name,
                 title: artTitle,
-                date: nDate || new Date().toISOString().slice(0, 10),
+                date: nDate,
                 pinned: hasNoticeBadge,
                 url: artHref
               };

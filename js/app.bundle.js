@@ -363,6 +363,7 @@
       if (!Array.isArray(next.courses)) next.courses = [];
       if (!Array.isArray(next.assignments)) next.assignments = [];
       if (!Array.isArray(next.notices)) next.notices = [];
+      pruneExpiredNotices(next, Date.now());
       if (!next.dismissedAutoBlocks || typeof next.dismissedAutoBlocks !== 'object') next.dismissedAutoBlocks = {};
       if (!Array.isArray(next.syncedCourseWeeks)) next.syncedCourseWeeks = [];
       if (!Array.isArray(next.lectures)) next.lectures = [];
@@ -399,6 +400,8 @@
         });
       }
 
+      pruneFinishedAssignments(next, Date.now());
+
       // 이번 주 반복 수업 및 대학 수업이 있는 모든 날짜의 전후 1시간 이동시간 자동 반영
       syncWeekClassesAndCommute(next, weekDatesFromMonday(getMonday(0)));
       const existingClassDates = new Set(
@@ -413,6 +416,7 @@
         const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) {
           _data = defaultData();
+          pruneFinishedAssignments(_data, Date.now());
           syncWeekClassesAndCommute(_data, weekDatesFromMonday(getMonday(0)));
           save();
           return;
@@ -420,7 +424,10 @@
         const parsed = JSON.parse(raw);
         const neededSeed = !(parsed && parsed.settings && parsed.settings.seededCourses2026_2 && parsed.settings.seededLearnUsInit2026_2 && parsed.settings.seededCommuteBlocksV1);
         _data = migrate(parsed); _loadError = null;
-        if (neededSeed) save();
+        const removedNotices = Array.isArray(parsed.notices) && _data.notices.length < parsed.notices.length;
+        const removedAssignments = Array.isArray(parsed.assignments) && _data.assignments.length < parsed.assignments.length;
+        if (removedNotices || removedAssignments) _data.updatedAt = new Date().toISOString();
+        if (neededSeed || removedNotices || removedAssignments) save();
       } catch (e) { _loadError = e; _data = defaultData(); syncWeekClassesAndCommute(_data, weekDatesFromMonday(getMonday(0))); console.error('불러오기 실패 — 마지막 저장본 보존', e); }
     }
     function save() { clearTimeout(_saveTimer); _saveTimer = setTimeout(commit, 400); }
@@ -442,11 +449,16 @@
       loadError: function () { return _loadError; },
       saveInfo: function () { return { at: _lastSaveAt, failed: _saveFailed }; },
       subscribe: function (fn) { _listeners.add(fn); return function () { _listeners.delete(fn); }; },
-      update: function (m) { m(_data); _data.updatedAt = new Date().toISOString(); save(); emit(); },
+      update: function (m) { m(_data); pruneFinishedAssignments(_data, Date.now()); _data.updatedAt = new Date().toISOString(); save(); emit(); },
       commitNow: commit,
       // 외부(클라우드)에서 받은 전체 데이터로 교체. silent=true면 다시 클라우드로 올리지 않도록 이벤트만 다르게.
       replaceAll: function (incoming, opts) {
         opts = opts || {};
+        if (opts.fromCloud && _data) {
+          incoming = Object.assign({}, incoming, { settings: Object.assign({}, incoming.settings, {
+            completedAssignmentKeys: Object.assign({}, _data.settings.completedAssignmentKeys, incoming.settings && incoming.settings.completedAssignmentKeys),
+          }) });
+        }
         _data = migrate(incoming);
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_data)); _lastSaveAt = new Date(); } catch (e) {}
         if (opts.fromCloud) { _data.__fromCloud = true; }
@@ -497,6 +509,7 @@
         else {
           // 병합: 동일 ID는 updatedAt 최신 우선, 없으면 기존 유지 + 신규 추가
           next = migrate(_data);
+          next.settings.completedAssignmentKeys = Object.assign({}, next.settings.completedAssignmentKeys, incoming.settings && incoming.settings.completedAssignmentKeys);
           ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','inbox','reviews','subjects'].forEach(function (c) {
             const byId = {};
             (next[c] || []).forEach(function (x) { byId[x.id] = x; });
@@ -511,6 +524,8 @@
             });
           });
         }
+        pruneExpiredNotices(next, Date.now());
+        pruneFinishedAssignments(next, Date.now());
         _data = next;
         commit();                                       // 확인: 실제 저장
         return true;
@@ -1288,7 +1303,6 @@
 
     root.append(el('header', { class: 'page-hero' }, [
       el('div', {}, [
-        el('div', { class: 'page-eyebrow' }, fmtEnglishEyebrowDate(new Date())),
         el('h1', { class: 'page-title' }, '오늘의 공부'),
         el('p', { class: 'page-subtitle' }, '확보한 수험 블록과 이어 읽을 서재를 확인하고 바로 집중을 시작합니다.'),
       ]),
@@ -2089,11 +2103,13 @@
     return changed;
   }
 
+  // 실제로 바뀐 내용이 있을 때만 저장(updatedAt 갱신) — 화면을 열 때마다 저장하면
+  // 여러 기기 간 클라우드 동기화가 서로 무한히 주고받는 문제가 생기므로 변경 시에만 반영
   function ensureWeekScheduleSynced(weekDates) {
-    let didChange = false;
-    Store.update(function (dd) {
-      didChange = syncWeekClassesAndCommute(dd, weekDates);
-    });
+    const dd = Store.data();
+    if (!dd) return false;
+    const didChange = syncWeekClassesAndCommute(dd, weekDates);
+    if (didChange) Store.update(function () {});
     return didChange;
   }
 
@@ -4013,6 +4029,58 @@
   let noticeOnlyImportant = false;
   let _activeLearnUsModal = null;
 
+  function assignmentDueTime(due) {
+    if (!due) return NaN;
+    // 날짜만 있으면 그날 끝까지 유효하며, 시간대 없는 LearnUs 마감은 한국 시간이다.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(due)) return Date.parse(due + 'T23:59:59.999+09:00');
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(due)) return Date.parse(due + '+09:00');
+    return Date.parse(due);
+  }
+
+  function assignmentCompletionKeys(assignment) {
+    const keys = [];
+    if (assignment.externalId) keys.push('external:' + assignment.externalId);
+    if (assignment.courseId || assignment.courseName) {
+      keys.push('course:' + JSON.stringify([assignment.courseId || assignment.courseName, assignment.title || '', assignment.due || '']));
+    }
+    return keys;
+  }
+
+  function isFinishedAssignment(assignment, referenceTime, completed) {
+    if (assignment.submitted) return true;
+    const dueTime = assignmentDueTime(assignment.due);
+    return (Number.isFinite(dueTime) && dueTime < referenceTime)
+      || assignmentCompletionKeys(assignment).some(function (key) { return completed[key] === true; });
+  }
+
+  function rememberSubmittedAssignment(data, assignment) {
+    const completed = data.settings.completedAssignmentKeys || (data.settings.completedAssignmentKeys = {});
+    assignmentCompletionKeys(assignment).forEach(function (key) { completed[key] = true; });
+  }
+
+  function pruneFinishedAssignments(data, referenceTime) {
+    const before = (data.assignments || []).length;
+    data.assignments = (data.assignments || []).filter(function (assignment) {
+      if (assignment.submitted) rememberSubmittedAssignment(data, assignment);
+      return !isFinishedAssignment(assignment, referenceTime, data.settings.completedAssignmentKeys || {});
+    });
+    return before - data.assignments.length;
+  }
+
+  function noticeDateTime(date) {
+    const value = /^\d{4}-\d{2}-\d{2}$/.test(date || '') ? date + 'T00:00:00+09:00' : date;
+    return Date.parse(value || '');
+  }
+
+  function pruneExpiredNotices(data, referenceTime) {
+    const cutoff = referenceTime - 7 * 24 * 60 * 60 * 1000;
+    data.notices = (data.notices || []).filter(function (notice) {
+      const postedAt = noticeDateTime(notice && notice.date);
+      // 날짜를 확인할 수 없는 기록은 오래됐다고 단정해 삭제하지 않는다.
+      return !Number.isFinite(postedAt) || postedAt > cutoff;
+    });
+  }
+
   function isImportantNoticeTitle(title, pinned) {
     if (pinned) return true;
     return /시험|중간|기말|퀴즈|고사|휴강|보강|과제|레포트|리포트|보고서|제출|마감|연기|변경|실험|발표|성적|채점|출석|출결|필독|중요|특강|실습|프로젝트|quiz|exam|midterm|final|hw|homework|assign|project|report|lab/i.test(title || '');
@@ -4182,7 +4250,7 @@
         el('button', { class: 'btn btn-primary', onclick: function () { openAssignmentEditor(null, ctx); } }, '+ 과제 추가'),
       ]),
     ]));
-    root.append(el('p', { class: 'hint', style: 'margin-top:-8px;margin-bottom:16px' }, '작성 완료를 제출 완료로 처리하지 않습니다. 홈페이지가 학교 시스템에 자동 제출하지 않습니다.'));
+    root.append(el('p', { class: 'hint', style: 'margin-top:-8px;margin-bottom:16px' }, '마감이 지났거나 제출 완료된 과제는 자동 삭제됩니다. 작성 완료만으로는 삭제되지 않으며, 학교 시스템에 자동 제출하지 않습니다.'));
     if (d.assignments.length === 0) {
       root.append(el('div', { class: 'empty' }, [
         el('span', { class: 'emoji' }, '📨'),
@@ -4691,6 +4759,8 @@
                   var dCand = parseDateStr(bCells[bci].textContent, false);
                   if (dCand) { nDate = dCand; break; }
                 }
+                var noticeTime = Date.parse(nDate + 'T00:00:00+09:00');
+                if (!Number.isFinite(noticeTime) || noticeTime <= Date.now() - 7 * 24 * 60 * 60 * 1000) continue;
                 var nKey = 'lu-ntc-' + crs.luId + '-' + artId;
                 if (!ntcMap[nKey]) {
                   ntcMap[nKey] = {
@@ -4698,7 +4768,7 @@
                     luCourseId: crs.luId,
                     courseName: crs.name,
                     title: artTitle,
-                    date: nDate || new Date().toISOString().slice(0, 10),
+                    date: nDate,
                     pinned: hasNoticeBadge,
                     url: artHref
                   };
@@ -4821,12 +4891,16 @@
     if (!payload || payload.app !== 'patent-study-home-learnus') {
       throw new Error('올바른 LearnUs 동기화 데이터가 아닙니다.');
     }
+    const parsedSyncTime = Date.parse(payload.syncedAt || '');
+    const syncTime = Number.isFinite(parsedSyncTime) ? parsedSyncTime : Date.now();
+    const noticeCutoff = syncTime - 7 * 24 * 60 * 60 * 1000;
     let addedAsg = 0, updatedAsg = 0, addedNtc = 0, matchedCrs = 0;
 
     Store.update(function (dd) {
       if (!Array.isArray(dd.courses)) dd.courses = [];
       if (!Array.isArray(dd.assignments)) dd.assignments = [];
       if (!Array.isArray(dd.notices)) dd.notices = [];
+      pruneExpiredNotices(dd, syncTime);
 
       /* 1) 강좌 매칭 및 링크·학습률 업데이트 (신규 정규 교과목이면 추가) */
       (payload.courses || []).forEach(function (lc) {
@@ -4870,6 +4944,15 @@
           return (la.externalId && a.externalId === la.externalId)
             || (a.title === la.title && ((matched && a.courseId === matched.id) || a.courseName === cleanCourseName));
         });
+        const incoming = Object.assign({}, la, { courseId: matched ? matched.id : '', courseName: cleanCourseName });
+        if (isFinishedAssignment(incoming, Date.now(), dd.settings.completedAssignmentKeys || {})) {
+          if (la.submitted) {
+            rememberSubmittedAssignment(dd, incoming);
+            if (ex) rememberSubmittedAssignment(dd, ex);
+          }
+          if (ex) dd.assignments = dd.assignments.filter(function (a) { return a !== ex; });
+          return;
+        }
         if (ex) {
           if (la.due) ex.due = la.due;
           if (la.url) ex.link = la.url;
@@ -4894,9 +4977,12 @@
         }
       });
 
-      /* 3) 공지사항 병합 (읽음 상태 보존) */
+      /* 3) 동기화 시점 기준 7일 미만 공지만 병합 (고정 공지도 동일, 읽음 상태 보존) */
       (payload.notices || []).forEach(function (ln) {
         if (!ln || !ln.title) return;
+        // LearnUs 게시판의 날짜 전용 값은 한국 시간 자정으로 해석한다.
+        const noticeTime = noticeDateTime(ln.date);
+        if (!Number.isFinite(noticeTime) || noticeTime <= noticeCutoff) return;
         const matched = matchCourseForLearnUs(dd.courses, ln.luCourseId, ln.courseName, '');
         const cleanCourseName = matched ? matched.name : String(ln.courseName || '').replace(/\s*\([A-Z]{2,4}\d{4}.*$/, '').trim();
         const imp = isImportantNoticeTitle(ln.title, ln.pinned);
@@ -4915,7 +5001,7 @@
             courseId: matched ? matched.id : '',
             courseName: cleanCourseName,
             title: ln.title,
-            date: ln.date || todayKey(),
+            date: ln.date,
             important: imp,
             read: false,
             url: ln.url || '',
@@ -4925,7 +5011,7 @@
         }
       });
 
-      dd.settings.lastLearnUsSyncAt = payload.syncedAt || new Date().toISOString();
+      dd.settings.lastLearnUsSyncAt = new Date(syncTime).toISOString();
     });
 
     return { courses: matchedCrs, addedAsg: addedAsg, updatedAsg: updatedAsg, addedNtc: addedNtc };
@@ -6745,7 +6831,22 @@
     const app = el('div', { class: 'app', id: 'app-shell' });
     const sidebar = el('aside', { class: 'sidebar', id: 'sidebar', 'aria-label': '주 메뉴' });
 
-    // 논결 NONGYEOL 브랜드 록업 + 분리된 서브타이틀 (제안서 2·3·6쪽)
+    const sidebarDate = el('time', { class: 'brand-context-date' });
+    const sidebarTime = el('time', { class: 'brand-context-time' });
+    const dateFormat = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' });
+    const timeFormat = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hourCycle: 'h23', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    function updateSidebarClock() {
+      const now = new Date();
+      sidebarDate.textContent = dateFormat.format(now);
+      sidebarTime.textContent = timeFormat.format(now);
+      sidebarDate.setAttribute('datetime', now.toISOString());
+      sidebarTime.setAttribute('datetime', now.toISOString());
+    }
+    updateSidebarClock();
+    setInterval(updateSidebarClock, 1000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) updateSidebarClock(); });
+
+    // 논결 NONGYEOL 브랜드와 한국 시간 기준 날짜·시계
     const brandWrap = el('div', { class: 'brand-wrap' }, [
       el('button', {
         type: 'button',
@@ -6759,8 +6860,8 @@
         ]),
       ]),
       el('div', { class: 'brand-context' }, [
-        el('div', { class: 'eyebrow' }, 'MY STUDY LIBRARY'),
-        el('div', { class: 'brand-context-year' }, '2027 변리사 2차 준비'),
+        sidebarDate,
+        sidebarTime,
       ]),
     ]);
     sidebar.append(brandWrap);
@@ -6796,7 +6897,8 @@
     const main = el('div', { class: 'main' });
     const searchInput = el('input', { type: 'search', placeholder: '노트, 쟁점, 답안 검색', 'aria-label': '전체 검색' });
     searchInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') openSearch(searchInput.value); });
-    searchInput.addEventListener('focus', function () { openSearch(searchInput.value); });
+    // 모달을 닫은 뒤 복원되는 초점으로 검색창이 다시 열리지 않도록 클릭으로 연다.
+    searchInput.addEventListener('click', function () { openSearch(searchInput.value); });
 
     const topbarAiBtn = el('button', {
       class: 'btn btn-sm',
@@ -6895,6 +6997,16 @@
     const hash = window.location.hash.slice(1);
     current = ROUTES[hash] ? hash : 'home';
     navigate(current);
+    function cleanupAssignments() {
+      if (document.hidden || Store.loadError() || document.querySelector('.modal-backdrop')) return;
+      const data = Store.data();
+      const now = Date.now();
+      if (!data.assignments.some(function (a) { return isFinishedAssignment(a, now, data.settings.completedAssignmentKeys || {}); })) return;
+      Store.update(function (dd) { pruneFinishedAssignments(dd, now); });
+      if (current === 'home' || current === 'academic') refresh();
+    }
+    setInterval(cleanupAssignments, 30000);
+    document.addEventListener('visibilitychange', cleanupAssignments);
     Timer.resumeIfActive();
     window.addEventListener('timer:changed', function () { refresh(); });
     window.addEventListener('hashchange', onHashChange);
@@ -6946,14 +7058,23 @@
       return;
     }
     if (cloudState.user) {
+      const st = cloudState.status || 'idle';
+      const statusText = st === 'syncing' ? '동기화 중…'
+        : st === 'offline' ? '오프라인 · 연결되면 자동 업로드'
+        : st === 'error' ? '⚠️ 동기화 오류'
+        : cloudState.lastSyncedAt ? 'PC·폰·태블릿 동기화됨 · ' + new Date(cloudState.lastSyncedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })
+        : 'PC·폰·태블릿 동기화 중';
+      const statusColor = st === 'error' ? 'var(--warn-fg)' : st === 'offline' ? 'var(--text-sub)' : 'var(--exam-fg)';
       box.append(
         el('div', { class: 'row', style: 'gap:8px;padding:6px 12px;align-items:center' }, [
-          cloudState.user.photo ? el('img', { src: cloudState.user.photo, width: '24', height: '24', style: 'border-radius:50%', alt: '' }) : el('span', {}, '👤'),
+          cloudState.user.photo ? el('img', { src: cloudState.user.photo, width: '24', height: '24', style: 'border-radius:50%', alt: '', referrerpolicy: 'no-referrer' }) : el('span', {}, '👤'),
           el('div', { style: 'flex:1;min-width:0' }, [
             el('div', { style: 'font-size:.8rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis' }, cloudState.user.name || '로그인됨'),
-            el('div', { class: 'hint', style: 'font-size:.72rem' }, '여러 기기 동기화 중'),
+            el('div', { class: 'hint', style: 'font-size:.72rem;color:' + statusColor, title: cloudState.lastError || '' }, statusText),
           ]),
+          el('button', { class: 'btn btn-sm btn-ghost', title: '지금 동기화', 'aria-label': '지금 동기화', style: 'min-height:32px;padding:4px 8px', onclick: function () { if (window.StudyCloud && window.StudyCloud.syncNow) window.StudyCloud.syncNow(); } }, '⟳'),
         ]),
+        st === 'error' && cloudState.lastError ? el('div', { class: 'hint', style: 'padding:0 12px 4px;font-size:.7rem;color:var(--warn-fg)' }, cloudState.lastError.slice(0, 120)) : '',
         el('button', { class: 'nav-item secondary', style: 'min-height:36px', onclick: function () { window.StudyCloud.logout(); } }, [svgIcon('logout'), '로그아웃']),
       );
     } else {
