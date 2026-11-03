@@ -5151,6 +5151,8 @@
   let lectureSelectedId = null;
   let lectureTab = 'log'; // 'log' | 'recall' | 'issues'
   let lectureShowArchived = false;
+  let lectureMaterialOpen = false; // 3차 출시: 교재·자료 나란히 읽기 2분할 토글
+  let lectureLogQuery = '';        // 3차 출시: 강의 내 기록 검색어
 
   function lectureStatusLabel(s) { const f = LECTURE_STATUSES.find(function (x) { return x[0] === s; }); return f ? f[1] : '미수강'; }
   function lectureLogsFor(d, lectureId) {
@@ -5396,6 +5398,8 @@
         ]),
       ]),
       el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
+        el('button', { class: 'btn btn-sm' + (lectureMaterialOpen ? ' btn-primary' : ''), onclick: function () { lectureMaterialOpen = !lectureMaterialOpen; ctx.refresh(); } }, lectureMaterialOpen ? '교재 닫기' : '교재 나란히 읽기'),
+        el('button', { class: 'btn btn-sm', onclick: function () { summarizeLectureWithAi(lec, ctx); } }, '✨ 내 기록 AI 요약'),
         el('button', { class: 'btn btn-sm', onclick: function () { exportLectureMarkdown(lec, ctx); } }, '⬇ 읽기용 내보내기'),
         el('button', { class: 'btn btn-sm', onclick: function () {
           Store.update(function (dd) { const lx = dd.lectures.find(function (x) { return x.id === lec.id; }); if (lx) { lx.archived = !lx.archived; lx.updatedAt = new Date().toISOString(); } });
@@ -5406,6 +5410,16 @@
       ]),
     ]));
 
+    // 교재·자료 나란히 읽기(3차 출시): 기본 2영역 — 교재 | 기록. 수강 정보는 아래 전체 폭으로 (제안서 6·12쪽)
+    if (lectureMaterialOpen) {
+      const splitWrap = el('div', { class: 'lecture-split', style: 'margin-bottom:16px' });
+      splitWrap.append(buildLectureMaterialPane(d, lec, ctx));
+      splitWrap.append(buildLectureRecordPane(d, lec, ctx));
+      root.append(splitWrap);
+      root.append(buildLectureInfoCard(d, lec, ctx));
+      return;
+    }
+
     const grid = el('div', { class: 'grid grid-7to3' });
     const leftWrap = el('div', { class: 'stack', style: 'gap:16px' });
     leftWrap.append(buildLectureInfoCard(d, lec, ctx));
@@ -5413,6 +5427,64 @@
     grid.append(leftWrap);
     // grid-7to3: 첫 자식이 넓은 영역 → 기록 패널을 넓게, 수강 정보를 우측에
     root.append(grid);
+  }
+
+  // 교재·자료 패널 (텍스트 발췌·메모를 강의 옆에 두고 대조). 외부 영상은 임베드하지 않습니다.
+  function buildLectureMaterialPane(d, lec, ctx) {
+    const pane = el('div', { class: 'card lecture-material-pane', style: 'display:flex;flex-direction:column;gap:10px' });
+    pane.append(el('div', { class: 'row between' }, [
+      el('strong', { style: 'font-family:var(--font-serif);font-size:1.05rem' }, '교재 · 자료'),
+      el('button', { type: 'button', class: 'btn btn-sm btn-ghost', onclick: function () { lectureMaterialOpen = false; ctx.refresh(); } }, '닫기 ✕'),
+    ]));
+    const pageInput = el('input', { type: 'text', value: lec.materialPage || '', placeholder: '교재 쪽수·범위 (예: p.142~150)' });
+    const linkInput = el('input', { type: 'text', value: lec.materialUrl || '', placeholder: '교재·자료 링크 (선택)' });
+    const area = el('textarea', {
+      style: 'min-height:320px;font-size:.94rem;line-height:1.78;background:var(--surface-pure)',
+      placeholder: '교재 요지나 조문·판례 원문을 붙여넣고, 왼쪽에 둔 채 오른쪽 강의 기록과 나란히 대조하세요. (강의 영상은 저작권·보안 때문에 이곳에 넣지 않습니다.)',
+    }, lec.materialNote || '');
+    let saveTimer;
+    function persistMaterial() {
+      Store.update(function (dd) {
+        const lx = dd.lectures.find(function (x) { return x.id === lec.id; });
+        if (lx) { lx.materialPage = pageInput.value; lx.materialUrl = linkInput.value.trim(); lx.materialNote = area.value; lx.updatedAt = new Date().toISOString(); }
+      });
+    }
+    [pageInput, linkInput].forEach(function (inp) { inp.onchange = persistMaterial; });
+    area.oninput = function () { clearTimeout(saveTimer); saveTimer = setTimeout(persistMaterial, 500); };
+    pane.append(
+      el('div', { class: 'field-row', style: 'margin:0' }, [
+        el('div', { class: 'field', style: 'margin:0' }, [el('label', {}, '쪽수·범위'), pageInput]),
+        el('div', { class: 'field', style: 'margin:0' }, [el('label', {}, '자료 링크'), lec.materialUrl ? el('div', { class: 'row', style: 'gap:6px' }, [linkInput, el('a', { href: lec.materialUrl, target: '_blank', rel: 'noopener noreferrer', class: 'btn btn-sm' }, '↗')]) : linkInput]),
+      ]),
+      area,
+      el('p', { class: 'hint', style: 'margin:0' }, '교재 발췌는 이 강의에 저장되며 자동 저장됩니다. 서재 노트의 "원문 나란히 읽기"와 같은 방식입니다.'),
+    );
+    return pane;
+  }
+
+  // 내 기록 AI 요약 (3차 출시) — 기존 Gemini 키로 강의 질문·회상·연결 쟁점을 요약 (전사 아님)
+  function summarizeLectureWithAi(lec, ctx) {
+    const d = Store.data();
+    const sub = Store.subject(lec.subjectId);
+    const logs = lectureLogsFor(d, lec.id);
+    const qs = logs.filter(function (l) { return l.kind === 'question'; });
+    const memos = logs.filter(function (l) { return l.kind === 'memo'; });
+    const recalls = logs.filter(function (l) { return l.kind === 'recall'; });
+    if (qs.length + memos.length + recalls.length === 0 && !(lec.materialNote && lec.materialNote.trim())) {
+      ctx.toast('요약할 기록이 아직 없습니다. 질문·메모·회상을 먼저 남겨 보세요.', 'warn');
+      return;
+    }
+    const parts = [];
+    parts.push('강의: ' + lec.title + (sub ? ' (' + sub.name + ')' : ''));
+    if (qs.length) parts.push('\n[질문]\n' + qs.map(function (l) { return '- ' + (l.posRaw ? '(' + l.posRaw + ') ' : '') + l.body + (l.qStatus === 'resolved' ? ' [해결]' : ' [미해결]'); }).join('\n'));
+    if (memos.length) parts.push('\n[메모]\n' + memos.map(function (l) { return '- ' + l.body; }).join('\n'));
+    if (recalls.length) parts.push('\n[회상]\n' + recalls.map(function (l) { return '- ' + (l.prompt || '') + (l.body ? ' → ' + l.body : ''); }).join('\n'));
+    if (lec.materialNote && lec.materialNote.trim()) parts.push('\n[교재 발췌]\n' + lec.materialNote.trim().slice(0, 1200));
+    openContextualAi({
+      label: (sub ? sub.name + ' · ' : '') + lec.title + ' 기록 요약',
+      contextText: parts.join('\n'),
+      promptDraft: '위 강의 기록(질문·메모·회상·교재 발췌)을 바탕으로, 아직 해결되지 않은 핵심 쟁점과 다음 답안에서 확인할 점을 3~5개로 요약해줘. 사실과 다를 수 있는 부분은 원문 확인이 필요하다고 표시해줘.',
+    });
   }
 
   // 좌측(넓은 영역): 강의 기록 / 회상 / 연결한 쟁점 탭
@@ -5473,15 +5545,27 @@
       ]),
     );
 
-    // 기록 목록
-    const logs = lectureLogsFor(d, lec.id).filter(function (l) { return l.kind === 'question' || l.kind === 'memo'; });
-    if (logs.length === 0) {
+    // 기록 목록 + 강의 내 검색 (3차 출시)
+    const allLogs = lectureLogsFor(d, lec.id).filter(function (l) { return l.kind === 'question' || l.kind === 'memo'; });
+    if (allLogs.length === 0) {
       card.append(el('p', { class: 'hint', style: 'margin-top:4px' }, '아직 기록이 없습니다. 수강 중 떠오른 질문이나 요지를 한 줄씩 남겨 보세요.'));
-    } else {
-      const list = el('div', { class: 'list', style: 'margin-top:4px' });
-      logs.forEach(function (l) { list.append(buildLectureLogRow(d, lec, l, ctx)); });
-      card.append(list);
+      lectureLogQuery = '';
+      return card;
     }
+    const searchInput = el('input', { type: 'search', value: lectureLogQuery, placeholder: '이 강의 기록 검색 (질문·메모·쪽수·쟁점)', style: 'margin-top:4px' });
+    const listWrap = el('div', { class: 'list', style: 'margin-top:8px' });
+    function renderLogList() {
+      listWrap.innerHTML = '';
+      const q = (lectureLogQuery || '').trim().toLowerCase();
+      const filtered = q
+        ? allLogs.filter(function (l) { return ((l.body || '') + ' ' + (l.issue || '') + ' ' + (l.page || '') + ' ' + (l.posRaw || '')).toLowerCase().indexOf(q) >= 0; })
+        : allLogs;
+      if (filtered.length === 0) { listWrap.append(el('p', { class: 'hint' }, '"' + lectureLogQuery + '"와 일치하는 기록이 없습니다.')); return; }
+      filtered.forEach(function (l) { listWrap.append(buildLectureLogRow(d, lec, l, ctx)); });
+    }
+    searchInput.oninput = function () { lectureLogQuery = searchInput.value; renderLogList(); };
+    renderLogList();
+    card.append(searchInput, listWrap);
     return card;
   }
 
