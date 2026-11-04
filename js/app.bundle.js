@@ -2393,7 +2393,6 @@
       ]),
       el('div', { class: 'row no-print', style: 'gap:8px' }, [
         el('button', { class: 'btn btn-sm', onclick: function () { window.print(); } }, '🖨 주간 인쇄'),
-        el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openBlockEditor(null, ctx, weekDates); } }, '+ 계획 블록 추가'),
       ]),
     ]));
 
@@ -2412,12 +2411,12 @@
       summaryStat('확보', fmtMin(securedMin), 'var(--exam-fg)'),
       summaryStat('미확보', fmtMin(shortMin), shortMin > 0 ? 'var(--warn-fg)' : 'var(--text-sub)'),
     ]));
+    head.append(el('div', { class: 'row no-print', style: 'margin-top:12px;gap:8px;flex-wrap:wrap;align-items:center' }, [
+      shortMin > 0 ? el('span', { style: 'color:var(--warn-fg);font-weight:600' }, '이번 주 수험 시간이 ' + fmtMin(shortMin) + ' 부족해요') : null,
+      el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openFreeSlotSuggest(ctx, weekDates, shortMin); } }, '빈 시간 제안 받기'),
+      el('button', { class: 'btn btn-sm', onclick: function () { openBlockEditor(null, ctx, weekDates); } }, '+ 계획 블록 추가'),
+    ]));
     if (shortMin > 0) {
-      // 상황 + 행동만 간결하게 (보고서 8쪽: 압박성 문구 대신 현재 상태와 다음 행동)
-      head.append(el('div', { class: 'row', style: 'margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center' }, [
-        el('span', { style: 'color:var(--warn-fg);font-weight:600' }, '이번 주 수험 시간이 ' + fmtMin(shortMin) + ' 부족해요'),
-        el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openFreeSlotSuggest(ctx, weekDates, shortMin); } }, '빈 시간 제안 받기'),
-      ]));
       // 원칙 설명은 도움말로 (평소엔 접힘)
       head.append(el('details', { style: 'margin-top:6px' }, [
         el('summary', { class: 'hint', style: 'cursor:pointer' }, '부족할 때 어떻게 하나요?'),
@@ -2426,43 +2425,12 @@
     }
     root.append(head);
 
-    const grid = el('div', { class: 'grid grid-7to3' });
     const planCol = el('div', { class: 'stack' });
     planCol.append(buildTimetable(d, weekDates, ctx));
     planCol.append(buildMobileDay(d, weekDates, ctx));
-    grid.append(planCol);
+    root.append(planCol);
 
-    const side = el('div', { class: 'stack' });
-
-    // 묶음 D: 반복 수업 + 전후 1시간 이동시간 자동 반영
-    const dismissedKeys = dismissedAutoKeysInWeek(d, weekDates);
-    const classCard = el('div', { class: 'card' });
-    const classHead = el('div', { class: 'row between' }, [el('h3', { style: 'margin:0' }, '반복 수업 · 이동시간')]);
-    classCard.append(classHead);
-    if ((d.courses || []).some(function (c) { return (c.schedule || []).length; })) {
-      classCard.append(
-        el('p', { class: 'hint', style: 'margin:6px 0 0' }, '대학 수업이 있는 날은 첫 수업 앞 1시간과 마지막 수업 뒤 1시간이 이동시간으로 자동 추가됩니다.')
-      );
-      if (dismissedKeys.length) {
-        classCard.append(
-          el('button', {
-            class: 'btn btn-sm btn-block',
-            style: 'margin-top:8px',
-            onclick: function () { restoreWeekScheduleBlocks(weekDates, ctx); },
-          }, '삭제한 수업·이동 ' + dismissedKeys.length + '개 다시 채우기')
-        );
-      }
-    } else {
-      classCard.append(el('p', { class: 'hint', style: 'margin:6px 0' }, '대학 학업에서 과목의 반복 수업 시간을 등록하면 수업과 전후 1시간 이동시간을 자동으로 넣어드려요.'),
-        el('button', { class: 'btn btn-sm btn-block', onclick: function () { ctx.navigate('academic'); } }, '수강 과목 등록하러 가기'));
-    }
-    side.append(classCard);
-
-    const addCard = el('div', { class: 'card' });
-    addCard.append(el('h3', {}, '시간표에 블록 추가'), el('p', { class: 'hint' }, '드래그 대신 날짜·시간 입력으로도 추가합니다.'),
-      el('button', { class: 'btn btn-primary btn-block', onclick: function () { openBlockEditor(null, ctx, weekDates); } }, '+ 계획 블록 추가'),
-      el('button', { class: 'btn btn-block', style: 'margin-top:8px', onclick: function () { openFreeSlotSuggest(ctx, weekDates, shortMin); } }, '빈 시간 제안 받기'));
-    side.append(addCard);
+    const side = el('div', { class: 'grid grid-2', style: 'margin-top:16px' });
 
     // 다음 출시: 강의 수강 계획 — 시청 예상 + 복기 여유를 빈 블록에 배치 (제안서 11·15쪽)
     const planLecs = (d.lectures || []).filter(function (l) { return l.status !== 'done' && l.status !== 'hold'; });
@@ -2476,26 +2444,10 @@
       side.append(lecPlanCard);
     }
 
-    const unCard = el('div', { class: 'card' });
-    unCard.append(el('h3', {}, '미배치 수험 과업'));
-    const scheduled = new Set(d.blocks.filter(function (b) { return weekDates.indexOf(b.date) >= 0; }).map(function (b) { return b.taskId; }).filter(Boolean));
-    const unplaced = d.tasks.filter(function (t) { return t.status !== 'done' && !scheduled.has(t.id); });
-    if (unplaced.length === 0) unCard.append(el('p', { class: 'hint' }, '이번 주에 미배치된 수험 과업이 없습니다.'));
-    else {
-      const list = el('div', { class: 'stack' });
-      unplaced.forEach(function (t) {
-        const sub = Store.subject(t.subjectId);
-        list.append(el('div', { class: 'item' }, [el('div', { class: 'main' }, [el('div', { class: 'title' }, t.title), el('div', { class: 'meta' }, [sub ? sub.name : '', t.estMin ? ' · ' + fmtMin(t.estMin) : ''])]), el('button', { class: 'btn btn-sm', onclick: function () { openBlockEditor(t, ctx, weekDates); } }, '배치')]));
-      });
-      unCard.append(list);
-    }
-    side.append(unCard);
-
     const legend = el('div', { class: 'card' });
     legend.append(el('h3', {}, '범례'), el('div', { class: 'stack', style: 'gap:6px' }, [legendRow('exam', '수험 보호 블록'), legendRow('acad', '고정 수업 · 학업'), legendRow('other', '이동 · 휴식 · 기타')]));
     side.append(legend);
-    grid.append(side);
-    root.append(grid);
+    root.append(side);
   }
 
   function parseLocalDateTime(s) {
