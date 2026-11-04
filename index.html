@@ -22,18 +22,23 @@
   </noscript>
 
   <!-- 단일 번들 — file:// 로 더블클릭해서 바로 열 수 있습니다 (서버 불필요) -->
-  <script src="js/app.bundle.js?v=8e8c8bed"></script>
+  <script src="js/app.bundle.js?v=9f1d2a7c"></script>
 
   <!-- Firebase 설정값 (구글 로그인 + 기기 간 실시간 동기화) -->
   <!-- 설정값이 null 이면 클라우드 기능은 자동으로 꺼지고, 앱은 평소처럼 로컬 저장으로 동작합니다. -->
   <script src="js/firebase-config.js"></script>
-  <!-- 웹서버(http/https) 환경에서만 Firebase 모듈 로드. file:// 로컬에서는 CORS로 막히므로 건너뜀 -->
+  <!-- 구글 드라이브(Picker) 연동 설정값 — GS 자료함에서 드라이브 PDF 가져오기 -->
+  <script src="js/drive-config.js"></script>
+  <!-- 웹서버(http/https) 환경에서만 Firebase/Drive 모듈 로드. file:// 로컬에서는 막히므로 건너뜀 -->
   <script>
     if (location.protocol === 'http:' || location.protocol === 'https:') {
       var s = document.createElement('script');
       s.type = 'module';
       s.src = 'js/firebase-sync.js';
       document.head.appendChild(s);
+      var d = document.createElement('script');
+      d.src = 'js/drive-picker.js';
+      document.head.appendChild(d);
     }
   </script>
 </body>

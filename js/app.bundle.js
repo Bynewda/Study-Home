@@ -3195,10 +3195,10 @@
           el('div', { class: 'main' }, [
             el('div', { class: 'title' }, f.name || '자료'),
             el('div', { class: 'meta' }, [
-              f.pageCount ? f.pageCount + '쪽' : '',
+              f.source === 'drive' ? '구글 드라이브' : '이 기기',
               f.pageRange ? ' · ' + f.pageRange + '쪽' : '',
               hidden ? ' · 실전 작성 전 열람 주의' : '',
-              _gsObjectUrls[f.id] ? '' : ' · (열람하려면 파일 다시 선택)',
+              (f.source === 'drive' || _gsObjectUrls[f.id]) ? '' : ' · (열람하려면 파일 다시 선택)',
             ]),
           ]),
           el('div', { class: 'row', style: 'gap:6px' }, [
@@ -3307,11 +3307,73 @@
     };
     function field(label, node, hint) { return el('label', { class: 'field' }, [el('span', {}, label), node, hint ? el('span', { class: 'hint' }, hint) : null]); }
 
-    ctx.modal({
+    // 구글 드라이브에서 가져오기 — http/https + 설정값이 있을 때만 표시
+    const driveReady = !!(window.StudyDrive && window.StudyDrive.configured);
+    const driveRow = el('div', {});
+    if (driveReady) {
+      const driveBtn = el('button', { type: 'button', class: 'btn' }, '📁 구글 드라이브에서 가져오기');
+      driveBtn.onclick = function () {
+        driveBtn.disabled = true;
+        const prev = driveBtn.textContent;
+        driveBtn.textContent = '드라이브 여는 중…';
+        window.StudyDrive.pickFiles(function (files) {
+          driveBtn.disabled = false; driveBtn.textContent = prev;
+          if (!files || !files.length) return; // 취소
+          Store.update(function (dd) {
+            const g = dd.gsSets.find(function (x) { return x.id === setId; });
+            if (!g) return;
+            g.files = g.files || [];
+            files.forEach(function (df) {
+              g.files.push({
+                id: Store.id('gsf'),
+                role: roleSel.value,
+                name: df.name || '드라이브 자료',
+                fileName: df.name || '',
+                fileType: df.mimeType || '',
+                fileSize: df.sizeBytes || 0,
+                source: 'drive',
+                driveId: df.id,
+                driveUrl: df.url,
+                pageRange: pageRangeInput.value.trim(),
+                note: noteInput.value.trim(),
+                createdAt: new Date().toISOString(),
+              });
+            });
+            g.updatedAt = new Date().toISOString();
+          });
+          close && close();
+          ctx.toast(files.length + '개 자료를 드라이브에서 가져왔습니다');
+          if (onDone) onDone();
+        }, { multiple: true }, function (err) {
+          driveBtn.disabled = false; driveBtn.textContent = prev;
+          const code = String(err || '');
+          if (code.indexOf('access_denied') >= 0 || code.indexOf('popup') >= 0) {
+            ctx.toast('드라이브 권한이 취소되었거나 창이 닫혔습니다');
+          } else {
+            ctx.toast('드라이브 연결에 실패했습니다. 로그인 상태를 확인하세요');
+          }
+        });
+      };
+      driveRow.append(
+        el('div', { class: 'card', style: 'background:var(--exam-bg);margin:0' }, [
+          el('div', { class: 'row', style: 'justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap' }, [
+            el('div', {}, [
+              el('strong', { style: 'color:var(--accent)' }, '여러 기기에서 열람'),
+              el('div', { class: 'hint', style: 'margin-top:2px' }, '드라이브에서 가져오면 컴퓨터·태블릿 어디서든 같은 구글 계정으로 열람됩니다. (위에서 역할·쪽범위·메모를 먼저 정한 뒤 눌러주세요)'),
+            ]),
+            driveBtn,
+          ]),
+        ])
+      );
+    }
+
+    let close = null;
+    const modalHandle = ctx.modal({
       title: '자료 추가',
       body: el('div', { class: 'form-grid' }, [
         field('역할', roleSel),
-        field('파일 선택', fileInput, 'PDF·이미지. 원본은 이 기기 세션에서만 열람되고, 저장소에는 메타데이터만 보관됩니다.'),
+        driveReady ? driveRow : null,
+        field('내 기기에서 파일 선택', fileInput, 'PDF·이미지. 이 방식은 원본이 이 기기 세션에서만 열람되고, 저장소에는 메타데이터만 보관됩니다(기기 간 공유 안 됨).'),
         field('자료 이름', nameInput),
         field('관련 쪽 범위', pageRangeInput),
         field('메모', noteInput),
@@ -3336,36 +3398,51 @@
             if (f) {
               try { _gsObjectUrls[fid] = URL.createObjectURL(f); } catch (e) {}
             }
+            if (!f) { closeAction(); ctx.toast('파일을 선택하거나 드라이브에서 가져오세요'); return; }
             Store.update(function (dd) {
               const g = dd.gsSets.find(function (x) { return x.id === setId; });
               if (g) { g.files = g.files || []; g.files.push(rec); g.updatedAt = new Date().toISOString(); }
             });
-            close();
+            closeAction();
             ctx.toast('자료를 추가했습니다');
             if (onDone) onDone();
           }
         },
       ],
     });
+    close = modalHandle.close;
+    function closeAction() { modalHandle.close(); }
   }
 
-  // 자료 열람: 세션 object-URL이 있으면 iframe/이미지로, 없으면 파일 다시 선택 안내
+  // 자료 열람: 드라이브 자료 → 미리보기 iframe / 로컬 자료 → 세션 object-URL (없으면 재선택)
   function openGsFileViewer(setId, file, ctx) {
     const url = _gsObjectUrls[file.id];
+    const isDrive = file.source === 'drive' && file.driveUrl;
     const body = el('div', {});
     const hidden = gsRoleHidden(file.role);
     if (hidden) {
       body.append(el('div', { class: 'hint', style: 'color:var(--terracotta);margin-bottom:8px' }, '⚠ ' + gsRoleLabel(file.role) + ' — 실전 작성 전에는 열람을 권장하지 않습니다.'));
     }
     const viewHost = el('div', { style: 'min-height:60vh' });
-    function showUrl(u) {
+    function showUrl(u, forceDoc) {
       viewHost.innerHTML = '';
-      const isImg = (file.fileType || '').indexOf('image/') === 0;
+      const isImg = !forceDoc && (file.fileType || '').indexOf('image/') === 0;
       if (isImg) {
         viewHost.append(el('img', { src: u, style: 'max-width:100%;display:block;margin:0 auto' }));
       } else {
-        viewHost.append(el('iframe', { src: u, style: 'width:100%;height:70vh;border:1px solid var(--border);border-radius:8px', title: file.name || '자료' }));
+        viewHost.append(el('iframe', { src: u, style: 'width:100%;height:70vh;border:1px solid var(--border);border-radius:8px', title: file.name || '자료', allow: 'autoplay' }));
       }
+    }
+    if (isDrive) {
+      // 드라이브 미리보기 — 로그인 상태면 바로, 아니면 열람 안내
+      body.append(el('div', { class: 'hint', style: 'margin-bottom:8px' }, '📁 구글 드라이브 자료입니다. 처음 열 때 구글 로그인이 필요할 수 있습니다.'));
+      showUrl(file.driveUrl, true);
+      body.append(viewHost);
+      body.append(el('div', { class: 'row', style: 'margin-top:8px' }, [
+        el('a', { class: 'btn btn-sm', href: file.driveUrl.replace('/preview', '/view'), target: '_blank', rel: 'noopener noreferrer' }, '드라이브에서 열기 ↗'),
+      ]));
+      ctx.modal({ title: gsRoleLabel(file.role) + ' · ' + (file.name || '자료'), wide: true, body: body, actions: [{ label: '닫기', primary: true, onClick: function (c) { c(); } }] });
+      return;
     }
     if (url) {
       showUrl(url);
