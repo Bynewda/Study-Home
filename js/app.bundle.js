@@ -468,6 +468,79 @@
         emit();
         if (_data.__fromCloud) { delete _data.__fromCloud; }
       },
+      // 클라우드 변경을 '교체'가 아니라 '레코드 단위 병합'으로 반영 (보고서 P1: 동시 편집 시 한쪽 통째 덮임 방지).
+      // 같은 id는 updatedAt 최신 내용 채택, 한쪽에만 있는 레코드는 모두 보존.
+      // 로컬에만 있던(아직 클라우드에 없던) 변경이 있으면 병합 전 스냅샷을 충돌 백업으로 남기고 true 반환.
+      mergeCloud: function (remote) {
+        if (!remote || typeof remote !== 'object') return { changed: false, conflict: false };
+        const COLS = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','inbox','reviews','subjects'];
+        const localSnapshot = JSON.parse(JSON.stringify(_data));
+        let localHadUnsynced = false;   // 로컬에만 있거나 로컬이 더 최신인 레코드 존재 여부
+        let changedFromRemote = false;  // 원격 때문에 로컬이 바뀌는지
+
+        const next = migrate(JSON.parse(JSON.stringify(_data)));
+        // settings: 완료키는 합집합, 나머지는 더 최신(updatedAt) 쪽 settings를 기준으로
+        const rUpdated = remote.updatedAt ? Date.parse(remote.updatedAt) : 0;
+        const lUpdated = _data.updatedAt ? Date.parse(_data.updatedAt) : 0;
+        if (remote.settings) {
+          if (rUpdated > lUpdated) next.settings = Object.assign({}, next.settings, remote.settings);
+          next.settings.completedAssignmentKeys = Object.assign({},
+            (remote.settings && remote.settings.completedAssignmentKeys) || {},
+            next.settings.completedAssignmentKeys || {});
+        }
+        COLS.forEach(function (c) {
+          const localById = {};
+          (next[c] || []).forEach(function (x) { if (x && x.id) localById[x.id] = x; });
+          const remoteById = {};
+          (remote[c] || []).forEach(function (x) { if (x && x.id) remoteById[x.id] = x; });
+          // 1) 원격 레코드를 로컬에 병합
+          (remote[c] || []).forEach(function (rx) {
+            if (!rx || !rx.id) return;
+            const lx = localById[rx.id];
+            if (!lx) { next[c].push(rx); localById[rx.id] = rx; changedFromRemote = true; }
+            else {
+              const lt = lx.updatedAt ? Date.parse(lx.updatedAt) : 0;
+              const rt2 = rx.updatedAt ? Date.parse(rx.updatedAt) : 0;
+              if (rt2 > lt) { Object.assign(lx, rx); changedFromRemote = true; }
+              else if (lt > rt2) { localHadUnsynced = true; }
+            }
+          });
+          // 2) 로컬에만 있는 레코드 = 아직 클라우드에 반영 안 된 로컬 변경 (보존됨)
+          (next[c] || []).forEach(function (lx) {
+            if (lx && lx.id && !remoteById[lx.id]) localHadUnsynced = true;
+          });
+        });
+
+        // 로컬에 아직 안 올라간 변경이 있는 상태에서 원격도 바뀌었다 = 진짜 동시편집 충돌
+        const conflict = localHadUnsynced && changedFromRemote;
+        if (conflict) {
+          try {
+            const key = STORAGE_KEY + ':conflict:' + Date.now();
+            localStorage.setItem(key, JSON.stringify({ at: new Date().toISOString(), reason: 'cloud-merge', local: localSnapshot }));
+            // 충돌 백업 목록 관리(최근 5개만 유지)
+            let list = [];
+            try { list = JSON.parse(localStorage.getItem(STORAGE_KEY + ':conflict-index') || '[]'); } catch (e) {}
+            list.push(key);
+            while (list.length > 5) { const old = list.shift(); try { localStorage.removeItem(old); } catch (e) {} }
+            localStorage.setItem(STORAGE_KEY + ':conflict-index', JSON.stringify(list));
+          } catch (e) { console.error('충돌 백업 저장 실패', e); }
+        }
+
+        next.updatedAt = new Date().toISOString();   // 병합 결과는 최신 → 다시 업로드되어 양쪽 수렴
+        _data = next;
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_data)); _lastSaveAt = new Date(); } catch (e) {}
+        _data.__fromCloud = true;   // 이 반영 자체가 즉시 되올라가 무한루프 도는 것을 막음(sync가 에코 무시)
+        emit();
+        if (_data.__fromCloud) { delete _data.__fromCloud; }
+        return { changed: changedFromRemote || conflict, conflict: conflict };
+      },
+      conflictBackups: function () {
+        let list = [];
+        try { list = JSON.parse(localStorage.getItem(STORAGE_KEY + ':conflict-index') || '[]'); } catch (e) {}
+        return list.map(function (k) {
+          try { const o = JSON.parse(localStorage.getItem(k) || 'null'); return o ? { key: k, at: o.at } : null; } catch (e) { return null; }
+        }).filter(Boolean);
+      },
       id: function (p) { return (p || 'id') + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7); },
       subject: function (id) { return _data.subjects.find(function (s) { return s.id === id; }) || null; },
       task: function (id) { return _data.tasks.find(function (t) { return t.id === id; }) || null; },
@@ -6298,6 +6371,44 @@
       el('button', { class: 'btn', onclick: function () { fileInput.click(); } }, '⬆ 백업 가져오기'),
       fileInput,
     ]));
+
+    // 보고서 P1: 동시 편집 충돌 시 자동 보관된 '직전 상태' 백업 — 열람·내려받기·삭제
+    const conflicts = Store.conflictBackups ? Store.conflictBackups() : [];
+    if (conflicts.length) {
+      const cf = el('div', { style: 'margin-top:14px;padding-top:12px;border-top:1px solid var(--border)' });
+      cf.append(el('div', { class: 'row between', style: 'margin-bottom:6px' }, [
+        el('strong', { style: 'color:var(--terracotta)' }, '충돌 백업 ' + conflicts.length + '개'),
+        el('span', { class: 'hint', style: 'font-size:.74rem' }, '다른 기기와 동시 수정 시 보관된 이 기기의 직전 상태'),
+      ]));
+      conflicts.slice().reverse().forEach(function (b) {
+        cf.append(el('div', { class: 'row between', style: 'gap:8px;padding:6px 0;flex-wrap:wrap' }, [
+          el('span', { class: 'hint' }, new Date(b.at).toLocaleString('ko-KR')),
+          el('div', { class: 'row', style: 'gap:6px' }, [
+            el('button', { class: 'btn btn-sm', onclick: function () {
+              try {
+                const o = JSON.parse(localStorage.getItem(b.key) || 'null');
+                if (!o || !o.local) { ctx.toast('백업을 찾을 수 없습니다.', 'warn'); return; }
+                const blob = new Blob([JSON.stringify({ app: 'patent-study-home', schemaVersion: SCHEMA_VERSION, exportedAt: o.at, data: o.local }, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a'); a.href = url; a.download = '논결_충돌백업_' + (o.at || '').slice(0, 19).replace(/[:T]/g, '-') + '.json'; a.click();
+                URL.revokeObjectURL(url);
+              } catch (e) { ctx.toast('내려받기 실패', 'warn'); }
+            } }, '⬇ 내려받기'),
+            el('button', { class: 'btn btn-sm btn-ghost', onclick: function () {
+              try {
+                localStorage.removeItem(b.key);
+                let list = JSON.parse(localStorage.getItem(STORAGE_KEY + ':conflict-index') || '[]');
+                list = list.filter(function (k) { return k !== b.key; });
+                localStorage.setItem(STORAGE_KEY + ':conflict-index', JSON.stringify(list));
+              } catch (e) {}
+              ctx.refresh();
+            } }, '삭제'),
+          ]),
+        ]));
+      });
+      cf.append(el('p', { class: 'hint', style: 'margin-top:4px;font-size:.74rem' }, '내려받은 파일을 "백업 가져오기 → 병합"으로 되살릴 수 있습니다. 확인 후에는 삭제해도 됩니다.'));
+      backupCard.append(cf);
+    }
     root.append(backupCard);
 
     const dangerCard = el('div', { class: 'card', style: 'border-color:var(--warn-fg)' });
@@ -6827,7 +6938,14 @@
       window.StudyCloud.register({
         onState: function (st) { cloudState = st; updateCloudUI(); },
         getLocal: function () { return Store.data(); },
-        setLocal: function (remote) { Store.replaceAll(remote, { fromCloud: true }); refresh(); },
+        // 보고서 P1: 클라우드 변경을 통째로 덮지 않고 레코드 단위로 병합 → 동시 편집 시 양쪽 기록 보존
+        setLocal: function (remote) {
+          const res = Store.mergeCloud(remote);
+          if (res && res.conflict) {
+            toast('다른 기기와 동시에 수정된 기록을 안전하게 합쳤습니다. 혹시 모를 경우를 위해 이 기기의 직전 상태를 설정 > 백업의 "충돌 백업"에 보관했습니다.', 'warn', 8000);
+          }
+          refresh();
+        },
       });
       // 로컬이 바뀔 때마다 클라우드로 업로드(로그인 상태에서만 동작)
       Store.subscribe(function (data) {
