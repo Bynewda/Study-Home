@@ -2425,12 +2425,16 @@
     }
     root.append(head);
 
+    const legend = el('div', { class: 'card row', style: 'margin-bottom:16px;gap:20px;flex-wrap:wrap' });
+    legend.append(el('h3', { style: 'margin:0' }, '범례'), el('div', { class: 'row', style: 'gap:20px;flex-wrap:wrap' }, [legendRow('exam', '수험 보호 블록'), legendRow('acad', '고정 수업 · 학업'), legendRow('other', '이동 · 휴식 · 기타')]));
+    root.append(legend);
+
     const planCol = el('div', { class: 'stack' });
     planCol.append(buildTimetable(d, weekDates, ctx));
     planCol.append(buildMobileDay(d, weekDates, ctx));
     root.append(planCol);
 
-    const side = el('div', { class: 'grid grid-2', style: 'margin-top:16px' });
+    const side = el('div', { class: 'stack', style: 'margin-top:16px' });
 
     // 다음 출시: 강의 수강 계획 — 시청 예상 + 복기 여유를 빈 블록에 배치 (제안서 11·15쪽)
     const planLecs = (d.lectures || []).filter(function (l) { return l.status !== 'done' && l.status !== 'hold'; });
@@ -2444,10 +2448,7 @@
       side.append(lecPlanCard);
     }
 
-    const legend = el('div', { class: 'card' });
-    legend.append(el('h3', {}, '범례'), el('div', { class: 'stack', style: 'gap:6px' }, [legendRow('exam', '수험 보호 블록'), legendRow('acad', '고정 수업 · 학업'), legendRow('other', '이동 · 휴식 · 기타')]));
-    side.append(legend);
-    root.append(side);
+    if (planLecs.length) root.append(side);
   }
 
   function parseLocalDateTime(s) {
