@@ -1,4 +1,4 @@
-/* =========================================================================
+﻿/* =========================================================================
    변리사 2차 수험 홈페이지 — 단일 번들
    file:// 로 더블클릭해서 바로 열 수 있도록 ES 모듈 없이 하나의 IIFE로 구성.
    기획 보고서(2026-11-01) P0 범위 전체 + 접근성/백업 반영.
@@ -137,10 +137,20 @@
     const prevFocus = (typeof document !== 'undefined' && document.activeElement) ? document.activeElement : null;
     const backdrop = el('div', { class: 'modal-backdrop', role: 'dialog', 'aria-modal': 'true', 'aria-label': opts.title });
     const closeBtn = el('button', { class: 'btn btn-ghost btn-sm', 'aria-label': '닫기', onclick: close }, '✕');
-    const m = el('div', { class: 'modal' }, [
+    // opts.actions: [{label, primary, danger, onClick(close)}] 를 footer 버튼으로 변환 (footer 미지정 시)
+    let footer = opts.footer;
+    if (!footer && Array.isArray(opts.actions)) {
+      footer = opts.actions.filter(Boolean).map(function (ac) {
+        return el('button', {
+          class: 'btn' + (ac.primary ? ' btn-primary' : '') + (ac.danger ? ' btn-danger' : ''),
+          onclick: function () { ac.onClick ? ac.onClick(close) : close(); },
+        }, ac.label);
+      });
+    }
+    const m = el('div', { class: 'modal' + (opts.wide ? ' modal-wide' : '') }, [
       el('div', { class: 'modal-head' }, [el('h2', {}, opts.title), closeBtn]),
       el('div', { class: 'modal-body' }, opts.body),
-      opts.footer ? el('div', { class: 'modal-foot' }, opts.footer) : null,
+      footer ? el('div', { class: 'modal-foot' }, footer) : null,
     ]);
     backdrop.append(m);
     backdrop.addEventListener('mousedown', function (e) { if (e.target === backdrop) close(); });
@@ -333,6 +343,9 @@
       // 강의 학습(인강): 강좌(lectures) + 회차·시점·질문 기록(lectureLogs) (제안서 5·9·13쪽)
       // 원본은 기존 노트·답안·과업에 두고, 강의는 출처와 학습 맥락을 보태는 항목으로 설계.
       lectures: [], lectureLogs: [], lastLectureResume: null,
+      // GS 자료함: 회차(gsSets) — 과목·강좌/반·회차·문항·자료(PDF 등) 메타데이터와 작성 시도 보관.
+      // 1단계는 기기 전용(로컬 저장). PDF 원본은 브라우저 저장소 한계로 세션 중 열람(object-URL) 또는 쪽 범위 참조로 다룬다.
+      gsSets: [],
       inbox: [], focusToday: [],
       reviews: [], retros: {}, lastOpenNote: null, lastStudyResume: null,
       dismissedAutoBlocks: {},
@@ -371,6 +384,7 @@
       if (!Array.isArray(next.syncedCourseWeeks)) next.syncedCourseWeeks = [];
       if (!Array.isArray(next.lectures)) next.lectures = [];
       if (!Array.isArray(next.lectureLogs)) next.lectureLogs = [];
+      if (!Array.isArray(next.gsSets)) next.gsSets = [];
 
       // 기존 과목에 학정번호(code) 보강
       next.courses.forEach(function (c) {
@@ -473,7 +487,7 @@
       // 로컬에만 있던(아직 클라우드에 없던) 변경이 있으면 병합 전 스냅샷을 충돌 백업으로 남기고 true 반환.
       mergeCloud: function (remote) {
         if (!remote || typeof remote !== 'object') return { changed: false, conflict: false };
-        const COLS = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','inbox','reviews','subjects'];
+        const COLS = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','gsSets','inbox','reviews','subjects'];
         const localSnapshot = JSON.parse(JSON.stringify(_data));
         let localHadUnsynced = false;   // 로컬에만 있거나 로컬이 더 최신인 레코드 존재 여부
         let changedFromRemote = false;  // 원격 때문에 로컬이 바뀌는지
@@ -558,7 +572,7 @@
         // 앱 식별자(있으면) 확인
         if (parsed.app && parsed.app !== 'patent-study-home') throw new Error('다른 앱의 백업 파일로 보입니다 (app=' + parsed.app + ').');
         // 컬렉션은 배열이어야 함
-        const cols = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','inbox','reviews','subjects'];
+        const cols = ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','gsSets','inbox','reviews','subjects'];
         const issues = [];
         cols.forEach(function (c) {
           if (incoming[c] != null && !Array.isArray(incoming[c])) issues.push(c + ' 필드가 목록이 아님');
@@ -586,7 +600,7 @@
           // 병합: 동일 ID는 updatedAt 최신 우선, 없으면 기존 유지 + 신규 추가
           next = migrate(_data);
           next.settings.completedAssignmentKeys = Object.assign({}, next.settings.completedAssignmentKeys, incoming.settings && incoming.settings.completedAssignmentKeys);
-          ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','inbox','reviews','subjects'].forEach(function (c) {
+          ['tasks','blocks','sessions','notes','answers','cards','courses','assignments','notices','lectures','lectureLogs','gsSets','inbox','reviews','subjects'].forEach(function (c) {
             const byId = {};
             (next[c] || []).forEach(function (x) { byId[x.id] = x; });
             (incoming[c] || []).forEach(function (x) {
@@ -2840,6 +2854,10 @@
   const ERROR_TYPES = ['쟁점 누락', '법리', '포섭', '목차', '시간 배분', '기타'];
   const RATERS = [['self', '본인 평가'], ['teacher', '강사 첨삭'], ['ai', 'AI 제안']];
 
+  // GS 자료함: 답안 연습 안의 탭. 'records'=채점·연습 기록, 'gs'=GS 자료함
+  let answersTab = 'records';
+  let gsShowArchived = false; // 보관한(끝난) 회차 보기 토글
+
   function renderAnswers(root, ctx) {
     const d = Store.data();
     root.append(el('header', { class: 'page-hero' }, [
@@ -2855,6 +2873,34 @@
       ]),
     ]));
 
+    const panel = el('div', {});
+    const tabs = el('div', { class: 'tabs', role: 'tablist' });
+    const tabDefs = [
+      ['records', '채점·연습 기록 (' + d.answers.length + ')'],
+      ['gs', 'GS 자료함 (' + (d.gsSets || []).filter(function (g) { return !g.archived; }).length + ')'],
+    ];
+    tabDefs.forEach(function (p) {
+      const btn = el('button', {
+        class: 'tab', role: 'tab', 'aria-selected': String(answersTab === p[0]),
+        onclick: function () {
+          answersTab = p[0];
+          tabs.querySelectorAll('.tab').forEach(function (t) { t.setAttribute('aria-selected', String(t === btn)); });
+          renderPanel();
+        },
+      }, p[1]);
+      tabs.append(btn);
+    });
+    root.append(tabs, panel);
+    function renderPanel() {
+      panel.innerHTML = '';
+      if (answersTab === 'gs') renderGsLibrary(panel, ctx);
+      else renderAnswerRecords(panel, ctx);
+    }
+    renderPanel();
+  }
+
+  function renderAnswerRecords(root, ctx) {
+    const d = Store.data();
     if (d.answers.length === 0) {
       root.append(el('div', { class: 'empty' }, [
         el('span', { class: 'emoji' }, '✍️'),
@@ -2917,10 +2963,536 @@
     root.append(list);
   }
 
+  /* =======================================================================
+     8-GS. GS 자료함 — PDF 문제지 등록·열람 + 회차/문항 연결 + 실전 작성 연계
+     (논결 GS 자료 업로드 설계서)
+     1단계: 기기 전용(로컬 저장). PDF 원본은 브라우저 저장소 한계로 세션 중 열람하며,
+     메타데이터(파일명·역할·쪽수·연도·학습목표·문항 배점)만 저장합니다.
+     ======================================================================= */
+  // GS 자료 역할 (실전 숨김 대상: 예시답안·첨삭·참고는 '작성 전 열람 주의')
+  const GS_FILE_ROLES = [
+    ['problem', '문제지', false],
+    ['model', '예시답안', true],
+    ['mine', '내 답안', false],
+    ['feedback', '첨삭', true],
+    ['ref', '참고자료', true],
+  ];
+  function gsRoleLabel(r) { const m = GS_FILE_ROLES.find(function (x) { return x[0] === r; }); return m ? m[1] : (r || '자료'); }
+  function gsRoleHidden(r) { const m = GS_FILE_ROLES.find(function (x) { return x[0] === r; }); return m ? m[2] : false; }
+  // 공부(학습) 상태 — 파일 등록 상태와 분리
+  const GS_STUDY_STATES = [
+    ['todo', '미착수'],
+    ['writing', '작성 중'],
+    ['graded', '채점·강평 완료'],
+    ['rewrite', '재작성 대기'],
+    ['done', '복습 완료'],
+  ];
+  function gsStudyLabel(s) { const m = GS_STUDY_STATES.find(function (x) { return x[0] === s; }); return m ? m[1] : '미착수'; }
+
+  // 세션 중 PDF object-URL 보관 (새로고침 시 해제됨 — 메타데이터만 영속)
+  const _gsObjectUrls = {}; // fileId -> objectURL
+
+  function gsSumMax(set) {
+    return (set.questions || []).reduce(function (s, q) {
+      const subs = q.subs || [];
+      if (subs.length) return s + subs.reduce(function (t, sub) { return t + (Number(sub.max) || 0); }, 0);
+      return s + (Number(q.max) || 0);
+    }, 0);
+  }
+
+  function renderGsLibrary(root, ctx) {
+    const d = Store.data();
+    const sets = (d.gsSets || []);
+    const active = sets.filter(function (g) { return !g.archived; });
+    const archived = sets.filter(function (g) { return g.archived; });
+
+    root.append(el('div', { class: 'section-head' }, [
+      el('div', {}, [
+        el('h2', {}, 'GS 자료함 ' + active.length + '개'),
+        el('p', { class: 'hint', style: 'margin:2px 0 0' }, 'GS 회차별 문제지·문항·배점을 등록하고, 실전 작성·채점·재작성으로 연결합니다. · 이 기기에만 저장됩니다(로컬).'),
+      ]),
+      el('button', { class: 'btn btn-primary', onclick: function () { openGsSetEditor(null, ctx); } }, '+ GS 회차 등록'),
+    ]));
+
+    if (active.length === 0 && archived.length === 0) {
+      root.append(el('div', { class: 'empty' }, [
+        el('span', { class: 'emoji' }, '📂'),
+        el('h3', {}, '등록된 GS 자료가 없습니다'),
+        el('p', {}, '과목·강좌/반·회차를 만들고 문제지 PDF와 문항 배점을 등록하면, 실전 작성 모드가 문항을 자동으로 불러옵니다.'),
+        el('div', { class: 'row', style: 'justify-content:center;margin-top:12px' }, [
+          el('button', { class: 'btn btn-primary', onclick: function () { openGsSetEditor(null, ctx); } }, '+ 첫 GS 회차 등록'),
+        ]),
+      ]));
+      return;
+    }
+
+    const list = el('div', { class: 'list' });
+    active.slice().sort(function (a, b) { return (b.updatedAt || '').localeCompare(a.updatedAt || ''); }).forEach(function (set) {
+      list.append(gsSetItem(set, ctx));
+    });
+    root.append(list);
+
+    if (archived.length) {
+      root.append(el('div', { class: 'row', style: 'margin-top:14px' }, [
+        el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { gsShowArchived = !gsShowArchived; ctx.refresh(); } },
+          (gsShowArchived ? '▾ ' : '▸ ') + '보관한 회차 ' + archived.length + '개'),
+      ]));
+      if (gsShowArchived) {
+        const arcList = el('div', { class: 'list', style: 'opacity:.75' });
+        archived.slice().sort(function (a, b) { return (b.updatedAt || '').localeCompare(a.updatedAt || ''); }).forEach(function (set) {
+          arcList.append(gsSetItem(set, ctx));
+        });
+        root.append(arcList);
+      }
+    }
+  }
+
+  function gsSetItem(set, ctx) {
+    const sub = Store.subject(set.subjectId);
+    const qCount = (set.questions || []).length;
+    const maxSum = gsSumMax(set);
+    const files = set.files || [];
+    const attempts = (Store.data().answers || []).filter(function (a) { return a.gsSetId === set.id; });
+    const titleRow = el('div', { class: 'row', style: 'gap:6px;align-items:center;flex-wrap:wrap' }, [
+      sub ? el('span', { class: 'tag tag-exam' }, sub.name) : '',
+      el('span', { class: 'title' }, (set.round ? set.round + ' ' : '') + (set.name || 'GS 회차')),
+      set.cohort ? el('span', { class: 'hint', style: 'font-size:.78rem' }, set.cohort) : null,
+      set.archived ? el('span', { class: 'tag tag-muted' }, '보관') : null,
+    ]);
+    const meta = el('div', { class: 'meta' }, [
+      set.teacher ? set.teacher + ' · ' : '',
+      qCount ? qCount + '문항' : '문항 미등록',
+      maxSum ? ' · 총 ' + maxSum + '점' : '',
+      files.length ? ' · 자료 ' + files.length + '개' : ' · 자료 없음',
+      attempts.length ? ' · 작성 ' + attempts.length + '회' : '',
+      set.dataYear ? ' · 자료 ' + set.dataYear : '',
+      set.goalYear ? ' · 목표 ' + set.goalYear : '',
+    ]);
+    return el('div', { class: 'item', style: 'cursor:pointer', onclick: function () { openGsSetDetail(set.id, ctx); } }, [
+      el('div', { class: 'main' }, [titleRow, meta]),
+      el('div', { class: 'row', style: 'gap:6px' }, [
+        el('button', { type: 'button', class: 'btn btn-sm btn-primary', onclick: function (e) { e.stopPropagation(); startGsAttempt(set, ctx); } }, '⏱ 실전 작성'),
+      ]),
+    ]);
+  }
+
+  // 회차 등록·수정 모달
+  function openGsSetEditor(set, ctx) {
+    const d = Store.data();
+    const editing = !!set;
+    const s = set || {};
+    const subjSel = el('select', {});
+    d.subjects.forEach(function (sj) { subjSel.append(el('option', { value: sj.id, selected: s.subjectId === sj.id }, sj.name)); });
+    const nameInput = el('input', { type: 'text', value: s.name || '', placeholder: '회차명 (예: 실전 GS A반)' });
+    const roundInput = el('input', { type: 'text', value: s.round || '', placeholder: '회차 (예: 1회)' });
+    const cohortInput = el('input', { type: 'text', value: s.cohort || '', placeholder: '강좌·반 (예: A반)' });
+    const teacherInput = el('input', { type: 'text', value: s.teacher || '', placeholder: '강사 (예: 김중연)' });
+    const sourceInput = el('input', { type: 'text', value: s.source || '', placeholder: '출처 (예: ○○학원)' });
+    const dataYearInput = el('input', { type: 'text', value: s.dataYear || '', placeholder: '자료 연도 (예: 2026)' });
+    const goalYearInput = el('input', { type: 'text', value: s.goalYear || '', placeholder: '학습 목표 연도 (예: 2027)' });
+
+    // 강좌(강의 학습)와 연결
+    const lecSel = el('select', {});
+    lecSel.append(el('option', { value: '' }, '— 연결 안 함 —'));
+    (d.lectures || []).forEach(function (lec) {
+      lecSel.append(el('option', { value: lec.id, selected: s.lectureId === lec.id }, lec.title + (lec.teacher ? ' · ' + lec.teacher : '')));
+    });
+
+    function field(label, node, hint) {
+      return el('label', { class: 'field' }, [el('span', {}, label), node, hint ? el('span', { class: 'hint' }, hint) : null]);
+    }
+
+    ctx.modal({
+      title: editing ? 'GS 회차 수정' : 'GS 회차 등록',
+      body: el('div', { class: 'form-grid' }, [
+        el('div', { class: 'grid-2' }, [field('과목', subjSel), field('강사', teacherInput)]),
+        el('div', { class: 'grid-2' }, [field('회차명', nameInput), field('회차', roundInput)]),
+        el('div', { class: 'grid-2' }, [field('강좌·반', cohortInput), field('출처', sourceInput)]),
+        el('div', { class: 'grid-2' }, [field('자료 연도', dataYearInput, '문제 출제 기준'), field('학습 목표 연도', goalYearInput, '응시 예정')]),
+        field('연결 강의(선택)', lecSel, '강의 학습의 강좌와 묶어 관리'),
+      ]),
+      actions: [
+        { label: '취소', onClick: function (close) { close(); } },
+        {
+          label: editing ? '저장' : '등록', primary: true, onClick: function (close) {
+            const data = {
+              subjectId: subjSel.value,
+              name: nameInput.value.trim() || 'GS 회차',
+              round: roundInput.value.trim(),
+              cohort: cohortInput.value.trim(),
+              teacher: teacherInput.value.trim(),
+              source: sourceInput.value.trim(),
+              dataYear: dataYearInput.value.trim(),
+              goalYear: goalYearInput.value.trim(),
+              lectureId: lecSel.value || null,
+              updatedAt: new Date().toISOString(),
+            };
+            Store.update(function (dd) {
+              if (editing) {
+                const ex = dd.gsSets.find(function (g) { return g.id === s.id; });
+                if (ex) Object.assign(ex, data);
+              } else {
+                data.id = Store.id('gs');
+                data.createdAt = new Date().toISOString();
+                data.questions = [];
+                data.files = [];
+                data.studyState = 'todo';
+                data.archived = false;
+                dd.gsSets.push(data);
+                s.id = data.id;
+              }
+            });
+            close();
+            ctx.toast(editing ? '회차를 저장했습니다' : 'GS 회차를 등록했습니다');
+            if (editing) ctx.refresh(); else openGsSetDetail(s.id, ctx);
+          }
+        },
+      ],
+    });
+  }
+
+  // 회차 상세: 문항·자료·작성 시도
+  function openGsSetDetail(setId, ctx) {
+    const d = Store.data();
+    const set = (d.gsSets || []).find(function (g) { return g.id === setId; });
+    if (!set) { ctx.toast('회차를 찾을 수 없습니다'); return; }
+    const sub = Store.subject(set.subjectId);
+    const maxSum = gsSumMax(set);
+
+    const body = el('div', { class: 'gs-detail' });
+
+    // 요약 헤더
+    body.append(el('div', { class: 'row', style: 'gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px' }, [
+      sub ? el('span', { class: 'tag tag-exam' }, sub.name) : '',
+      el('strong', { style: 'font-family:var(--font-serif)' }, (set.round ? set.round + ' ' : '') + (set.name || 'GS 회차')),
+      set.teacher ? el('span', { class: 'hint' }, set.teacher) : null,
+      maxSum ? el('span', { class: 'tag tag-muted' }, '총 ' + maxSum + '점') : null,
+      el('span', { class: 'tag tag-muted' }, gsStudyLabel(set.studyState)),
+    ]));
+    body.append(el('div', { class: 'hint', style: 'margin-bottom:10px' }, [
+      (set.cohort ? set.cohort + ' · ' : ''),
+      (set.source ? set.source + ' · ' : ''),
+      (set.dataYear ? '자료 ' + set.dataYear + ' · ' : ''),
+      (set.goalYear ? '목표 ' + set.goalYear : ''),
+      el('span', { style: 'display:block;margin-top:4px;color:var(--terracotta)' }, '⚠ 이 기기에만 저장됩니다. PDF 원본은 현재 세션에서만 열람되며, 새로고침하면 다시 선택해야 합니다.'),
+    ]));
+
+    // --- 자료(파일) 영역 ---
+    const filesWrap = el('div', {});
+    function renderFiles() {
+      filesWrap.innerHTML = '';
+      filesWrap.append(el('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, [
+        el('h3', { style: 'margin:6px 0' }, '자료'),
+        el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openGsFileAttach(set.id, ctx, renderFiles); } }, '+ 자료 추가'),
+      ]));
+      const cur = (Store.data().gsSets.find(function (g) { return g.id === set.id; }) || {}).files || [];
+      if (!cur.length) { filesWrap.append(el('div', { class: 'hint' }, '아직 자료가 없습니다. 문제지 PDF를 등록해 보세요.')); return; }
+      const fl = el('div', { class: 'list' });
+      cur.forEach(function (f) {
+        const hidden = gsRoleHidden(f.role);
+        const row = el('div', { class: 'item' }, [
+          el('span', { class: 'tag ' + (hidden ? 'tag-warn' : 'tag-acad') }, gsRoleLabel(f.role)),
+          el('div', { class: 'main' }, [
+            el('div', { class: 'title' }, f.name || '자료'),
+            el('div', { class: 'meta' }, [
+              f.pageCount ? f.pageCount + '쪽' : '',
+              f.pageRange ? ' · ' + f.pageRange + '쪽' : '',
+              hidden ? ' · 실전 작성 전 열람 주의' : '',
+              _gsObjectUrls[f.id] ? '' : ' · (열람하려면 파일 다시 선택)',
+            ]),
+          ]),
+          el('div', { class: 'row', style: 'gap:6px' }, [
+            el('button', { class: 'btn btn-sm', onclick: function () { openGsFileViewer(set.id, f, ctx); } }, '열람'),
+            el('button', { class: 'btn btn-sm btn-ghost', onclick: function () {
+              ctx.confirm('이 자료를 삭제할까요?', { danger: true }).then(function (ok) {
+                if (!ok) return;
+                Store.update(function (dd) {
+                  const g = dd.gsSets.find(function (x) { return x.id === set.id; });
+                  if (g) { g.files = (g.files || []).filter(function (x) { return x.id !== f.id; }); g.updatedAt = new Date().toISOString(); }
+                });
+                renderFiles();
+              });
+            } }, '삭제'),
+          ]),
+        ]);
+        fl.append(row);
+      });
+      filesWrap.append(fl);
+    }
+    renderFiles();
+
+    // --- 문항 영역 ---
+    const qWrap = el('div', {});
+    function renderQuestions() {
+      qWrap.innerHTML = '';
+      const g = Store.data().gsSets.find(function (x) { return x.id === set.id; }) || set;
+      const sum = gsSumMax(g);
+      qWrap.append(el('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, [
+        el('h3', { style: 'margin:6px 0' }, '문항 · 배점' + (sum ? ' (총 ' + sum + '점)' : '')),
+        el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openGsQuestionEditor(set.id, null, ctx, renderQuestions); } }, '+ 대문제'),
+      ]));
+      const qs = g.questions || [];
+      if (!qs.length) { qWrap.append(el('div', { class: 'hint' }, '대문제와 소문항 배점을 등록하면 실전 작성·채점에서 자동으로 불러옵니다.')); return; }
+      const ql = el('div', { class: 'list' });
+      qs.forEach(function (q) {
+        const subs = q.subs || [];
+        const qMax = subs.length ? subs.reduce(function (t, x) { return t + (Number(x.max) || 0); }, 0) : (Number(q.max) || 0);
+        const subStr = subs.length ? subs.map(function (x) { return x.label + ' ' + (x.max || 0) + '점'; }).join(' / ') : '';
+        ql.append(el('div', { class: 'item', style: 'cursor:pointer', onclick: function () { openGsQuestionEditor(set.id, q.id, ctx, renderQuestions); } }, [
+          el('span', { class: 'tag tag-exam' }, q.label || '문'),
+          el('div', { class: 'main' }, [
+            el('div', { class: 'title' }, (q.title || q.label || '대문제') + ' · ' + qMax + '점'),
+            el('div', { class: 'meta' }, [subStr, q.pageRef ? (subStr ? ' · ' : '') + q.pageRef + '쪽' : '']),
+          ]),
+        ]));
+      });
+      qWrap.append(ql);
+    }
+    renderQuestions();
+
+    // --- 작성 시도 영역 ---
+    const attWrap = el('div', {});
+    function renderAttempts() {
+      attWrap.innerHTML = '';
+      const attempts = (Store.data().answers || []).filter(function (a) { return a.gsSetId === set.id; })
+        .sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); });
+      attWrap.append(el('h3', { style: 'margin:6px 0' }, '작성·채점 기록 (' + attempts.length + ')'));
+      if (!attempts.length) { attWrap.append(el('div', { class: 'hint' }, '실전 작성을 시작하면 이 회차의 문항이 자동으로 채워집니다.')); return; }
+      const al = el('div', { class: 'list' });
+      attempts.forEach(function (a) {
+        const sumSc = (a.items || []).reduce(function (t, it) { return t + (Number(it.score) || 0); }, 0);
+        const mx = (a.items || []).reduce(function (t, it) { return t + (Number(it.max) || 0); }, 0);
+        al.append(el('div', { class: 'item', style: 'cursor:pointer', onclick: function () { if (detailModal) detailModal.close(); openAnswerEditor(a, ctx); } }, [
+          el('div', { class: 'main' }, [
+            el('div', { class: 'title' }, (a.date ? fmtDate(a.date) : '작성') + (a.scored === false ? ' · 채점 전' : ' · ' + sumSc + '/' + mx + '점')),
+            el('div', { class: 'meta' }, (a.errors && a.errors.length) ? '감점: ' + a.errors.join(', ') : ''),
+          ]),
+        ]));
+      });
+      attWrap.append(al);
+    }
+    renderAttempts();
+
+    body.append(qWrap, el('hr', { style: 'border:none;border-top:1px solid var(--border);margin:12px 0' }), filesWrap,
+      el('hr', { style: 'border:none;border-top:1px solid var(--border);margin:12px 0' }), attWrap);
+
+    const detailModal = ctx.modal({
+      title: 'GS 회차',
+      wide: true,
+      body: body,
+      actions: [
+        { label: '회차 정보 수정', onClick: function (close) { close(); openGsSetEditor(set, ctx); } },
+        { label: (set.archived ? '보관 해제' : '보관'), onClick: function (close) {
+            Store.update(function (dd) { const g = dd.gsSets.find(function (x) { return x.id === set.id; }); if (g) { g.archived = !g.archived; g.updatedAt = new Date().toISOString(); } });
+            close(); ctx.refresh(); ctx.toast(set.archived ? '보관을 해제했습니다' : '회차를 보관했습니다');
+          } },
+        { label: '⏱ 실전 작성', primary: true, onClick: function (close) { close(); startGsAttempt(Store.data().gsSets.find(function (x) { return x.id === set.id; }) || set, ctx); } },
+        { label: '닫기', onClick: function (close) { close(); ctx.refresh(); } },
+      ],
+    });
+  }
+
+  // 자료(파일) 추가: PDF 등 — 메타데이터 저장 + 세션 object-URL 보관
+  function openGsFileAttach(setId, ctx, onDone) {
+    const roleSel = el('select', {});
+    GS_FILE_ROLES.forEach(function (r) { roleSel.append(el('option', { value: r[0] }, r[1])); });
+    const fileInput = el('input', { type: 'file', accept: '.pdf,application/pdf,image/*' });
+    const nameInput = el('input', { type: 'text', placeholder: '자료 이름 (선택 — 파일명 자동)' });
+    const pageRangeInput = el('input', { type: 'text', placeholder: '관련 쪽 범위 (예: 1-5)' });
+    const noteInput = el('input', { type: 'text', placeholder: '메모 (선택)' });
+
+    fileInput.onchange = function () {
+      const f = fileInput.files && fileInput.files[0];
+      if (f && !nameInput.value) nameInput.value = f.name;
+    };
+    function field(label, node, hint) { return el('label', { class: 'field' }, [el('span', {}, label), node, hint ? el('span', { class: 'hint' }, hint) : null]); }
+
+    ctx.modal({
+      title: '자료 추가',
+      body: el('div', { class: 'form-grid' }, [
+        field('역할', roleSel),
+        field('파일 선택', fileInput, 'PDF·이미지. 원본은 이 기기 세션에서만 열람되고, 저장소에는 메타데이터만 보관됩니다.'),
+        field('자료 이름', nameInput),
+        field('관련 쪽 범위', pageRangeInput),
+        field('메모', noteInput),
+      ]),
+      actions: [
+        { label: '취소', onClick: function (close) { close(); } },
+        {
+          label: '추가', primary: true, onClick: function (close) {
+            const f = fileInput.files && fileInput.files[0];
+            const fid = Store.id('gsf');
+            const rec = {
+              id: fid,
+              role: roleSel.value,
+              name: (nameInput.value.trim() || (f && f.name) || '자료'),
+              fileName: f ? f.name : '',
+              fileType: f ? f.type : '',
+              fileSize: f ? f.size : 0,
+              pageRange: pageRangeInput.value.trim(),
+              note: noteInput.value.trim(),
+              createdAt: new Date().toISOString(),
+            };
+            if (f) {
+              try { _gsObjectUrls[fid] = URL.createObjectURL(f); } catch (e) {}
+            }
+            Store.update(function (dd) {
+              const g = dd.gsSets.find(function (x) { return x.id === setId; });
+              if (g) { g.files = g.files || []; g.files.push(rec); g.updatedAt = new Date().toISOString(); }
+            });
+            close();
+            ctx.toast('자료를 추가했습니다');
+            if (onDone) onDone();
+          }
+        },
+      ],
+    });
+  }
+
+  // 자료 열람: 세션 object-URL이 있으면 iframe/이미지로, 없으면 파일 다시 선택 안내
+  function openGsFileViewer(setId, file, ctx) {
+    const url = _gsObjectUrls[file.id];
+    const body = el('div', {});
+    const hidden = gsRoleHidden(file.role);
+    if (hidden) {
+      body.append(el('div', { class: 'hint', style: 'color:var(--terracotta);margin-bottom:8px' }, '⚠ ' + gsRoleLabel(file.role) + ' — 실전 작성 전에는 열람을 권장하지 않습니다.'));
+    }
+    const viewHost = el('div', { style: 'min-height:60vh' });
+    function showUrl(u) {
+      viewHost.innerHTML = '';
+      const isImg = (file.fileType || '').indexOf('image/') === 0;
+      if (isImg) {
+        viewHost.append(el('img', { src: u, style: 'max-width:100%;display:block;margin:0 auto' }));
+      } else {
+        viewHost.append(el('iframe', { src: u, style: 'width:100%;height:70vh;border:1px solid var(--border);border-radius:8px', title: file.name || '자료' }));
+      }
+    }
+    if (url) {
+      showUrl(url);
+    } else {
+      const reInput = el('input', { type: 'file', accept: '.pdf,application/pdf,image/*' });
+      reInput.onchange = function () {
+        const f = reInput.files && reInput.files[0];
+        if (!f) return;
+        try { _gsObjectUrls[file.id] = URL.createObjectURL(f); showUrl(_gsObjectUrls[file.id]); } catch (e) { ctx.toast('열람에 실패했습니다'); }
+      };
+      viewHost.append(el('div', { class: 'empty' }, [
+        el('span', { class: 'emoji' }, '📄'),
+        el('h3', {}, file.name || '자료'),
+        el('p', {}, '이 세션에서는 아직 파일이 열려 있지 않습니다. 원본 파일(' + (file.fileName || 'PDF') + ')을 다시 선택하면 바로 열람됩니다.'),
+        el('div', { class: 'row', style: 'justify-content:center;margin-top:10px' }, [reInput]),
+      ]));
+    }
+    body.append(viewHost);
+    ctx.modal({ title: gsRoleLabel(file.role) + ' · ' + (file.name || '자료'), wide: true, body: body, actions: [{ label: '닫기', primary: true, onClick: function (close) { close(); } }] });
+  }
+
+  // 문항(대문제·소문항) 등록·수정
+  function openGsQuestionEditor(setId, questionId, ctx, onDone) {
+    const d = Store.data();
+    const set = (d.gsSets || []).find(function (g) { return g.id === setId; });
+    if (!set) return;
+    const editing = !!questionId;
+    const q = editing ? (set.questions || []).find(function (x) { return x.id === questionId; }) : null;
+    const labelInput = el('input', { type: 'text', value: (q && q.label) || ('문' + (((set.questions || []).length) + 1)), placeholder: '예: 문1' });
+    const titleInput = el('input', { type: 'text', value: (q && q.title) || '', placeholder: '대문제 주제 (선택)' });
+    const pageInput = el('input', { type: 'text', value: (q && q.pageRef) || '', placeholder: '문제지 쪽 (예: 1-2)' });
+
+    // 소문항 편집
+    const subsWrap = el('div', {});
+    let subsDraft = (q && q.subs ? JSON.parse(JSON.stringify(q.subs)) : []);
+    const qMaxInput = el('input', { type: 'number', min: '0', value: (q && !(q.subs || []).length ? (q.max || '') : ''), placeholder: '소문항 없을 때 대문제 배점' });
+    function renderSubs() {
+      subsWrap.innerHTML = '';
+      subsDraft.forEach(function (sub, i) {
+        const lbl = el('input', { type: 'text', value: sub.label || '', placeholder: '(1)', style: 'width:70px' });
+        const mx = el('input', { type: 'number', min: '0', value: sub.max || '', placeholder: '배점', style: 'width:80px' });
+        lbl.oninput = function () { subsDraft[i].label = lbl.value; };
+        mx.oninput = function () { subsDraft[i].max = Number(mx.value) || 0; };
+        subsWrap.append(el('div', { class: 'row', style: 'gap:6px;margin-bottom:4px;align-items:center' }, [
+          lbl, mx, el('span', { class: 'hint' }, '점'),
+          el('button', { type: 'button', class: 'btn btn-sm btn-ghost', onclick: function () { subsDraft.splice(i, 1); renderSubs(); } }, '✕'),
+        ]));
+      });
+      const total = subsDraft.reduce(function (t, x) { return t + (Number(x.max) || 0); }, 0);
+      subsWrap.append(el('div', { class: 'row', style: 'gap:8px;align-items:center' }, [
+        el('button', { type: 'button', class: 'btn btn-sm', onclick: function () { subsDraft.push({ label: '(' + (subsDraft.length + 1) + ')', max: 0 }); renderSubs(); } }, '+ 소문항'),
+        subsDraft.length ? el('span', { class: 'hint' }, '소문항 합 ' + total + '점') : null,
+      ]));
+    }
+    renderSubs();
+    function field(label, node, hint) { return el('label', { class: 'field' }, [el('span', {}, label), node, hint ? el('span', { class: 'hint' }, hint) : null]); }
+
+    ctx.modal({
+      title: editing ? '문항 수정' : '대문제 추가',
+      body: el('div', { class: 'form-grid' }, [
+        el('div', { class: 'grid-2' }, [field('문항 표시', labelInput), field('문제지 쪽', pageInput)]),
+        field('주제', titleInput),
+        field('소문항 (배점)', subsWrap, '소문항이 있으면 대문제 배점은 자동 합산됩니다.'),
+        field('대문제 배점', qMaxInput, '소문항이 없을 때만 사용'),
+      ]),
+      actions: [
+        editing ? { label: '삭제', danger: true, onClick: function (close) {
+            ctx.confirm('이 문항을 삭제할까요?', { danger: true }).then(function (ok) {
+              if (!ok) return;
+              Store.update(function (dd) { const g = dd.gsSets.find(function (x) { return x.id === setId; }); if (g) { g.questions = (g.questions || []).filter(function (x) { return x.id !== questionId; }); g.updatedAt = new Date().toISOString(); } });
+              close(); if (onDone) onDone();
+            });
+          } } : null,
+        { label: '취소', onClick: function (close) { close(); } },
+        {
+          label: '저장', primary: true, onClick: function (close) {
+            const cleanSubs = subsDraft.filter(function (x) { return (x.label || '').trim() || Number(x.max); }).map(function (x) { return { label: (x.label || '').trim(), max: Number(x.max) || 0 }; });
+            const rec = {
+              label: labelInput.value.trim() || '문',
+              title: titleInput.value.trim(),
+              pageRef: pageInput.value.trim(),
+              subs: cleanSubs,
+              max: cleanSubs.length ? 0 : (Number(qMaxInput.value) || 0),
+            };
+            Store.update(function (dd) {
+              const g = dd.gsSets.find(function (x) { return x.id === setId; });
+              if (!g) return;
+              g.questions = g.questions || [];
+              if (editing) { const ex = g.questions.find(function (x) { return x.id === questionId; }); if (ex) Object.assign(ex, rec); }
+              else { rec.id = Store.id('gsq'); g.questions.push(rec); }
+              g.updatedAt = new Date().toISOString();
+            });
+            close(); if (onDone) onDone();
+          }
+        },
+      ].filter(Boolean),
+    });
+  }
+
+  // GS 회차 → 실전 작성: 문항 배점을 items로 펼쳐서 작성 모드 진입
+  function gsItemsFromSet(set) {
+    const items = [];
+    (set.questions || []).forEach(function (q) {
+      const subs = q.subs || [];
+      if (subs.length) {
+        subs.forEach(function (sub) { items.push({ label: (q.label || '문') + sub.label, score: 0, max: Number(sub.max) || 0 }); });
+      } else {
+        items.push({ label: q.label || '문', score: 0, max: Number(q.max) || 0 });
+      }
+    });
+    return items;
+  }
+  function startGsAttempt(set, ctx) {
+    if (!set) return;
+    openExamSimMode(ctx, {
+      subjectId: set.subjectId,
+      source: (set.round ? set.round + ' ' : '') + (set.name || 'GS'),
+      round: set.round || '',
+      gsSetId: set.id,
+      items: gsItemsFromSet(set),
+    });
+  }
+
   // 실전 답안 작성 모드: 타이머 + 문제·목차 작성 (우측 AI 및 노트 단서 숨김 — 제안서 10·11쪽)
   // 보고서 P1: 작성 초안 자동 임시저장·복구, 닫기 전 경고, 타이머 0 도달 시 자동 일시정지 + 초과 작성 선택.
   const EXAM_DRAFT_KEY = 'patent-study-home:exam-draft:v1';
-  function openExamSimMode(ctx) {
+  function openExamSimMode(ctx, opts) {
     const d = Store.data();
     document.body.classList.add('exam-sim-active');
     let simTick = null;
@@ -2929,13 +3501,20 @@
     let overtime = false;      // 0 도달 후 초과 작성 모드
     let savedHandled = false;  // 종료(채점 전환/복구삭제)로 정상 마무리 여부
 
+    // GS 회차에서 진입하면(opts) 그 회차 정보를 우선 채우고, 일반 진입이면 이전 초안을 복구.
+    const fromGs = !!(opts && opts.gsSetId);
     let recovered = null;
-    try { recovered = JSON.parse(localStorage.getItem(EXAM_DRAFT_KEY) || 'null'); } catch (e) {}
+    if (!fromGs) { try { recovered = JSON.parse(localStorage.getItem(EXAM_DRAFT_KEY) || 'null'); } catch (e) {} }
+    const gsItems = (opts && Array.isArray(opts.items) && opts.items.length) ? opts.items : null;
+    const gsSetId = (opts && opts.gsSetId) || null;
+    const preSubject = (opts && opts.subjectId) || (recovered && recovered.subjectId);
+    const preSource = (opts && opts.source) || (recovered && recovered.source) || '';
+    const preIssue = (recovered && recovered.issue) || '';
 
     const subjSel = el('select', {});
-    d.subjects.forEach(function (s) { subjSel.append(el('option', { value: s.id, selected: recovered && recovered.subjectId === s.id }, s.name)); });
-    const sourceInput = el('input', { type: 'text', value: (recovered && recovered.source) || '', placeholder: '출처·회차 (예: GS 3순환 2회)' });
-    const issueInput = el('input', { type: 'text', value: (recovered && recovered.issue) || '', placeholder: '문항 주제 (선택)' });
+    d.subjects.forEach(function (s) { subjSel.append(el('option', { value: s.id, selected: preSubject === s.id }, s.name)); });
+    const sourceInput = el('input', { type: 'text', value: preSource, placeholder: '출처·회차 (예: GS 3순환 2회)' });
+    const issueInput = el('input', { type: 'text', value: preIssue, placeholder: '문항 주제 (선택)' });
     const minSel = el('select', {});
     [[30, '30분 (단문·약술)'], [60, '60분 (1문항 집중)'], [120, '120분 (실전 전범위)']].forEach(function (p) {
       minSel.append(el('option', { value: String(p[0]), selected: p[0] === ((recovered && recovered.timeLimit) || 60) }, p[1]));
@@ -3019,7 +3598,15 @@
         ])
       : null;
 
+    const gsBanner = fromGs
+      ? el('div', { class: 'card', style: 'background:var(--exam-bg);border-color:var(--accent)' }, [
+          el('strong', { style: 'color:var(--accent)' }, '📂 GS 회차 연계 작성'),
+          el('div', { class: 'hint', style: 'margin-top:2px' }, preSource + ' · 채점 모드로 전환하면 등록한 ' + (gsItems ? gsItems.length : 0) + '개 문항 배점이 자동으로 채워집니다.'),
+        ])
+      : null;
+
     const body = el('div', { class: 'stack' }, [
+      gsBanner,
       recoverBanner,
       el('div', { class: 'card', style: 'background:var(--exam-bg);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap' }, [
         el('div', {}, [
@@ -3075,16 +3662,17 @@
               id: null,
               subjectId: subjSel.value,
               source: sourceInput.value.trim() || '실전 타이머 연습',
-              round: '',
+              round: (opts && opts.round) || '',
               timeLimit: Number(minSel.value) || 60,
               date: new Date().toISOString().slice(0, 10),
               rater: 'self',
-              items: [{ label: '1문', score: 0, max: 50 }],
+              items: gsItems ? JSON.parse(JSON.stringify(gsItems)) : [{ label: '1문', score: 0, max: 50 }],
               errors: [],
               issue: issueInput.value.trim(),
               draftOutline: outlineArea.value,
               note: overSec > 0 ? ('[실전] 제한 ' + fmtMin(baseSec / 60) + ' 초과 ' + fmtMin(overSec / 60) + ' 작성') : '',
               rewriteOf: null,
+              gsSetId: gsSetId,
             };
             savedHandled = true;
             clearDraft();
@@ -3260,6 +3848,34 @@
     }
     rebuildLectureLink();
 
+    // GS 자료함 연결 — 이 답안이 속한 GS 회차 (문제지·문항 배점 출처)
+    const gsLinkWrap = el('div', { class: 'field' });
+    (function buildGsLink() {
+      gsLinkWrap.innerHTML = '';
+      const dd = Store.data();
+      const sets = (dd.gsSets || []);
+      if (!sets.length && !a.gsSetId) { return; } // GS 자료가 없으면 표시하지 않음
+      gsLinkWrap.append(el('label', {}, 'GS 자료함 연결'));
+      const sel = el('select', { style: 'flex:1' });
+      sel.append(el('option', { value: '' }, '(연결된 GS 회차 없음)'));
+      sets.forEach(function (g) {
+        const sub = Store.subject(g.subjectId);
+        sel.append(el('option', { value: g.id, selected: g.id === a.gsSetId }, (sub ? '[' + sub.name + '] ' : '') + (g.round ? g.round + ' ' : '') + (g.name || 'GS')));
+      });
+      sel.onchange = function () { a.gsSetId = sel.value || null; };
+      const row = el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [sel]);
+      const cur = sets.find(function (g) { return g.id === a.gsSetId; });
+      if (cur) {
+        row.append(el('button', { class: 'btn btn-sm', type: 'button', onclick: function () { persist(); m.close(); openGsSetDetail(cur.id, ctx); } }, '회차 자료 열기 ▸'));
+        if ((cur.questions || []).length && (!a.items || !a.items.length || (a.items.length === 1 && a.items[0].label === '1문'))) {
+          row.append(el('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: function () {
+            a.items = gsItemsFromSet(cur); renderItems(); updateTotal();
+          } }, '문항 배점 불러오기'));
+        }
+      }
+      gsLinkWrap.append(row);
+    })();
+
     const origForCompare = a.rewriteOf ? d.answers.find(function (x) { return x.id === a.rewriteOf; }) : null;
 
     const body = el('div', {}, [
@@ -3273,6 +3889,7 @@
       el('div', { class: 'field' }, [el('label', {}, '감점 원인 태그'), errWrap]),
       el('div', { class: 'field' }, [el('label', {}, '대상 쟁점 및 학습 연결'), issueInput, linkRow]),
       el('div', { class: 'field' }, [el('label', {}, '강평 연결 (감점 근거가 된 강의 회차·시점)'), lectureLinkWrap]),
+      gsLinkWrap,
       el('div', { class: 'field' }, [el('label', {}, '작성 목차 · 답안 요지'), outlineInput]),
       el('div', { class: 'field' }, [el('label', {}, '채점 코멘트 · 보완 메모'), noteInput]),
     ]);
