@@ -2385,18 +2385,18 @@
     const securedMin = sumNonOverlap(examBlocks);
     const shortMin = Math.max(0, goalMin - securedMin);
 
-    root.append(el('header', { class: 'page-hero' }, [
+    const board = el('section', { class: 'week-board', 'aria-label': '주간 시간표' });
+    root.append(board);
+    board.append(el('header', { class: 'page-hero week-hero' }, [
       el('div', {}, [
-        el('div', { class: 'page-eyebrow' }, 'WEEKLY STUDY PLAN'),
         el('h1', { class: 'page-title' }, '주간 계획'),
-        el('p', { class: 'page-subtitle' }, '수험 블록을 먼저 배치해 보호하고 고정 수업과의 충돌을 조정합니다.'),
       ]),
       el('div', { class: 'row no-print', style: 'gap:8px' }, [
         el('button', { class: 'btn btn-sm', onclick: function () { window.print(); } }, '🖨 주간 인쇄'),
       ]),
     ]));
 
-    const head = el('div', { class: 'card', style: 'margin-bottom:16px' });
+    const head = el('div', { class: 'card week-controls' });
     head.append(el('div', { class: 'row between' }, [
       el('div', { class: 'row' }, [
         el('button', { class: 'btn btn-sm', onclick: function () { weekOffset--; ctx.refresh(); } }, '‹ 지난 주'),
@@ -2404,35 +2404,29 @@
         el('button', { class: 'btn btn-sm', onclick: function () { weekOffset++; ctx.refresh(); } }, '다음 주 ›'),
         weekOffset !== 0 ? el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { weekOffset = 0; ctx.refresh(); } }, '이번 주로') : null,
       ]),
-      el('span', { class: 'hint desktop-only' }, '빈 시간 칸 클릭으로 바로 추가'),
+      el('div', { class: 'row week-goals' }, [
+        el('span', {}, ['목표 ', el('strong', {}, fmtMin(goalMin))]),
+        el('span', {}, ['확보 ', el('strong', { style: 'color:var(--exam-fg)' }, fmtMin(securedMin))]),
+        el('span', {}, ['미확보 ', el('strong', { style: shortMin > 0 ? 'color:var(--warn-fg)' : '' }, fmtMin(shortMin))]),
+      ]),
     ]));
-    head.append(el('div', { class: 'row', style: 'margin-top:12px;gap:24px;flex-wrap:wrap' }, [
-      summaryStat('주간 수험 목표', fmtMin(goalMin), ''),
-      summaryStat('확보', fmtMin(securedMin), 'var(--exam-fg)'),
-      summaryStat('미확보', fmtMin(shortMin), shortMin > 0 ? 'var(--warn-fg)' : 'var(--text-sub)'),
+    head.append(el('div', { class: 'row between no-print week-actions' }, [
+      el('span', { class: 'hint desktop-only' }, '빈 시간 칸을 눌러 블록을 추가하세요.'),
+      el('div', { class: 'row', style: 'gap:8px' }, [
+        el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openFreeSlotSuggest(ctx, weekDates, shortMin); } }, '빈 시간 제안 받기'),
+        el('button', { class: 'btn btn-sm', onclick: function () { openBlockEditor(null, ctx, weekDates); } }, '+ 계획 블록 추가'),
+      ]),
     ]));
-    head.append(el('div', { class: 'row no-print', style: 'margin-top:12px;gap:8px;flex-wrap:wrap;align-items:center' }, [
-      shortMin > 0 ? el('span', { style: 'color:var(--warn-fg);font-weight:600' }, '이번 주 수험 시간이 ' + fmtMin(shortMin) + ' 부족해요') : null,
-      el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openFreeSlotSuggest(ctx, weekDates, shortMin); } }, '빈 시간 제안 받기'),
-      el('button', { class: 'btn btn-sm', onclick: function () { openBlockEditor(null, ctx, weekDates); } }, '+ 계획 블록 추가'),
-    ]));
-    if (shortMin > 0) {
-      // 원칙 설명은 도움말로 (평소엔 접힘)
-      head.append(el('details', { style: 'margin-top:6px' }, [
-        el('summary', { class: 'hint', style: 'cursor:pointer' }, '부족할 때 어떻게 하나요?'),
-        el('p', { class: 'hint', style: 'margin:6px 0 0' }, '수면·이동·마감을 줄여 억지로 채우지 않습니다. 범위 축소, 과업 분할, 목표 조정 중에서 고르세요. 미확보 시간은 숨기지 않고 그대로 보여 줍니다.'),
-      ]));
-    }
-    root.append(head);
+    board.append(head);
 
-    const legend = el('div', { class: 'card row', style: 'margin-bottom:16px;gap:20px;flex-wrap:wrap' });
+    const legend = el('div', { class: 'card row week-legend' });
     legend.append(el('h3', { style: 'margin:0' }, '범례'), el('div', { class: 'row', style: 'gap:20px;flex-wrap:wrap' }, [legendRow('exam', '수험 보호 블록'), legendRow('acad', '고정 수업 · 학업'), legendRow('other', '이동 · 휴식 · 기타')]));
-    root.append(legend);
+    board.append(legend);
 
-    const planCol = el('div', { class: 'stack' });
+    const planCol = el('div', { class: 'stack week-plan' });
     planCol.append(buildTimetable(d, weekDates, ctx));
     planCol.append(buildMobileDay(d, weekDates, ctx));
-    root.append(planCol);
+    board.append(planCol);
 
     const side = el('div', { class: 'stack', style: 'margin-top:16px' });
 
@@ -2496,7 +2490,7 @@
     return out;
   }
   function buildTimetable(d, weekDates, ctx) {
-    const card = el('div', { class: 'card desktop-only', style: 'overflow-x:auto;padding:16px' });
+    const card = el('div', { class: 'card desktop-only week-timetable' });
     const ROW_H = 44, END_H = 24;
     let startH = 7;
 
@@ -2522,22 +2516,21 @@
       return layoutDayBlocks(segs);
     });
 
-    const table = el('div', { class: 'timetable' });
+    const table = el('div', { class: 'timetable', style: '--tt-hours:' + (END_H - startH) + ';--tt-body-height:' + ((END_H - startH) * ROW_H) + 'px' });
     table.append(el('div', { class: 'tt-head', style: 'border-left:none' }, ''));
     weekDates.forEach(function (k, i) { table.append(el('div', { class: 'tt-head', style: k === todayKey() ? 'color:var(--accent)' : '' }, WEEKDAYS[i] + ' ' + k.slice(8))); });
 
     const timesCol = el('div', { class: 'tt-times' });
     for (let h = startH; h < END_H; h++) {
-      timesCol.append(el('div', { class: 'tt-timecol', style: 'height:' + ROW_H + 'px' }, String(h)));
+      timesCol.append(el('div', { class: 'tt-timecol' }, String(h)));
     }
     table.append(timesCol);
 
     weekDates.forEach(function (k, dayIdx) {
-      const dayCol = el('div', { class: 'tt-daycol', style: 'height:' + ((END_H - startH) * ROW_H) + 'px' });
+      const dayCol = el('div', { class: 'tt-daycol' });
       for (let h = startH; h < END_H; h++) {
         const cell = el('div', {
           class: 'tt-cell' + (h === END_H - 1 ? ' tt-cell-last' : ''),
-          style: 'height:' + ROW_H + 'px',
           role: 'button',
           tabindex: '0',
           'aria-label': k + ' ' + h + '시 블록 추가',
@@ -2547,24 +2540,25 @@
         dayCol.append(cell);
       }
       daySegments[dayIdx].forEach(function (seg) {
-        dayCol.append(blockChip(d, seg, startH, ROW_H, ctx));
+        dayCol.append(blockChip(d, seg, startH, END_H, ctx));
       });
       table.append(dayCol);
     });
 
-    card.append(table, el('p', { class: 'hint', style: 'margin:8px 0 0' }, '빈 칸을 클릭하면 해당 시간에 블록을 추가합니다. 이동·휴식은 별도 블록으로 확보하세요.'));
+    card.append(table);
     return card;
   }
-  function blockChip(d, seg, startH, rowH, ctx) {
+  function blockChip(d, seg, startH, endH, ctx) {
     const b = seg.block;
     const kind = blockKind(d, b);
     const sub = Store.subject(b.subjectId);
     const label = (b.locked ? '🔒 ' : '') + (b.title || (sub ? sub.name : '블록'));
     const timeText = fmtTime(b.start) + '~' + fmtTime(b.end);
 
-    const topPx = ((seg.startMin - startH * 60) / 60) * rowH + 1;
-    const rawHeightPx = ((seg.endMin - seg.startMin) / 60) * rowH;
-    const heightPx = Math.max(16, rawHeightPx - 2);
+    // 백분율로 배치해 화면 높이가 바뀌어도 시간 칸과 블록이 함께 늘고 줄어듭니다.
+    const rangeMin = (endH - startH) * 60;
+    const topPct = (seg.startMin - startH * 60) / rangeMin * 100;
+    const heightPct = (seg.endMin - seg.startMin) / rangeMin * 100;
 
     const n = seg.totalCols || 1;
     const col = seg.col || 0;
@@ -2572,16 +2566,16 @@
     const widthExpr = n === 1 ? 'calc(100% - 4px)' : 'calc((100% - ' + gapTotal + 'px) / ' + n + ')';
     const leftExpr = n === 1 ? '2px' : 'calc(2px + ' + col + ' * ((100% - ' + gapTotal + 'px) / ' + n + ' + 2px))';
 
-    const cls = 'tt-block ' + kind + (b.source === 'commute' ? ' commute' : '') + (heightPx < 36 ? ' compact' : '') + (heightPx >= 60 ? ' tall' : '');
-    const style = 'top:' + topPx + 'px;height:' + heightPx + 'px;left:' + leftExpr + ';width:' + widthExpr + ';';
+    const cls = 'tt-block ' + kind + (b.source === 'commute' ? ' commute' : '');
+    const style = 'top:calc(' + topPct + '% + 1px);height:max(16px, calc(' + heightPct + '% - 2px));left:' + leftExpr + ';width:' + widthExpr + ';';
 
-    const children = [el('span', { class: 'tt-block-title' }, label)];
-    if (heightPx >= 36) children.push(el('span', { class: 'tt-block-time' }, timeText));
+    const children = [el('span', { class: 'tt-block-title' }, label), el('span', { class: 'tt-block-time' }, timeText)];
 
     return el('button', {
       class: cls,
       style: style,
       title: (b.title || (sub ? sub.name : '블록')) + ' (' + timeText + ')',
+      'aria-label': label + ' ' + timeText,
       onclick: function (e) { e.stopPropagation(); openBlockEditor(null, ctx, null, { editBlock: b }); },
     }, children);
   }
@@ -6518,6 +6512,7 @@
     const content = document.getElementById('content');
     const titleEl = document.getElementById('page-title');
     if (!content) return;
+    content.classList.toggle('week-content', current === 'week');
     clear(content);
     const route = ROUTES[current];
     if (titleEl) titleEl.textContent = route.title;
