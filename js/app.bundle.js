@@ -3169,12 +3169,27 @@
       maxSum ? el('span', { class: 'tag tag-muted' }, '총 ' + maxSum + '점') : null,
       el('span', { class: 'tag tag-muted' }, gsStudyLabel(set.studyState)),
     ]));
+    // 자료 저장 방식에 맞춘 안내 — 드라이브 자료는 기기 간 공유됨 / 로컬 자료는 이 기기 전용
+    const _gsFiles = set.files || [];
+    const _hasDrive = _gsFiles.some(function (f) { return f.source === 'drive'; });
+    const _hasLocal = _gsFiles.some(function (f) { return f.source !== 'drive'; });
+    let storageNote, storageColor;
+    if (_hasDrive && _hasLocal) {
+      storageColor = 'var(--terracotta)';
+      storageNote = '📁 구글 드라이브 자료는 같은 구글 계정으로 여러 기기에서 열람됩니다. ⚠ 다만 \'이 기기\' 자료는 현재 세션에서만 열람되며(새로고침 시 다시 선택), 다른 기기에서는 보이지 않습니다.';
+    } else if (_hasDrive) {
+      storageColor = 'var(--accent)';
+      storageNote = '📁 구글 드라이브 자료입니다. 같은 구글 계정으로 로그인하면 컴퓨터·태블릿 어디서든 열람됩니다. (회차·문항 정보도 기기 간 동기화됩니다.)';
+    } else {
+      storageColor = 'var(--terracotta)';
+      storageNote = '⚠ 자료가 \'이 기기\'에만 저장됩니다. PDF 원본은 현재 세션에서만 열람되며(새로고침 시 다시 선택), 다른 기기에서는 보이지 않습니다. 여러 기기에서 보려면 \'드라이브에서 가져오기\'로 추가하세요.';
+    }
     body.append(el('div', { class: 'hint', style: 'margin-bottom:10px' }, [
       (set.cohort ? set.cohort + ' · ' : ''),
       (set.source ? set.source + ' · ' : ''),
       (set.dataYear ? '자료 ' + set.dataYear + ' · ' : ''),
       (set.goalYear ? '목표 ' + set.goalYear : ''),
-      el('span', { style: 'display:block;margin-top:4px;color:var(--terracotta)' }, '⚠ 이 기기에만 저장됩니다. PDF 원본은 현재 세션에서만 열람되며, 새로고침하면 다시 선택해야 합니다.'),
+      el('span', { style: 'display:block;margin-top:4px;color:' + storageColor }, storageNote),
     ]));
 
     // --- 자료(파일) 영역 ---
