@@ -23,15 +23,16 @@
   --exam-bg:       #E6ECDF;
   --exam-fg:       #244C3D;
 
-  /* 학업과 강조 (모래빛 + 테라코타) */
+  /* 학업과 강조 (모래빛 + 테라코타) — 영역 구분에 전용 */
   --acad-bg:       #EFE4D3;
   --acad-fg:       #8A4D36;
   --terracotta:    #98583F;
 
-  /* 경고·검토 필요 */
-  --warn-bg:       #F6E6DF;
-  --warn-fg:       #98583F;
-  --danger-fg:     #9B3B2A;
+  /* 상태 전용 색상 (경고·마감 임박·지각 / 대학 테라코타와 명확히 분리) */
+  --warn-bg:       #FEF3C7; /* 따뜻한 앰버 옐로 */
+  --warn-fg:       #92400E; /* 진한 앰버 브라운 - WCAG AA 7.2:1 통과 */
+  --danger-bg:     #FEE2E2;
+  --danger-fg:     #991B1B;
 
   --border:        #E2DFD5;
   --border-strong: #CFCBC0;
@@ -69,32 +70,37 @@
   --acad-bg:       #342C22;
   --acad-fg:       #E7C5A8;
   --terracotta:    #E2A287;
-  --warn-bg:       #3B2620;
-  --warn-fg:       #EBA995;
-  --danger-fg:     #F09A86;
+  --warn-bg:       #452205;
+  --warn-fg:       #FCD34D;
+  --danger-bg:     #4A1212;
+  --danger-fg:     #FCA5A5;
   --border:        #29473C;
   --border-strong: #385B4E;
   --shadow: 0 1px 2px rgba(0, 0, 0, .28), 0 6px 20px rgba(0, 0, 0, .22);
 }
 
-/* 따뜻한 한지 테마 (선택 개인 테마, 제안서 10쪽) */
+/* 웜 페이퍼 (한지) 테마 — 기본 아이보리 대비 눈부심을 더 낮추고 따스한 한지 미색 (보고서 1·3쪽) */
 [data-theme="paper"] {
-  --bg:            #EFECE1;
-  --surface:       #FAF7EE;
-  --surface-pure:  #FDFBF5;
-  --surface-soft:  #E6E2D4;
+  --bg:            #EDE6D6; /* 포근하고 따뜻한 미색 한지 바탕 */
+  --surface:       #F9F3E5; /* 크림 미색 카드 */
+  --surface-pure:  #FCF8EE;
+  --surface-soft:  #E2D7C2;
   --text:          #24352C;
   --text-sub:      #59685E;
   --accent:        #244C3D;
   --accent-strong: #19372C;
   --on-accent:     #FAF7EE;
-  --exam-bg:       #E1E9D9;
+  --exam-bg:       #DFE8D7;
   --exam-fg:       #244C3D;
-  --acad-bg:       #ECDFC9;
+  --acad-bg:       #EADBC5;
   --acad-fg:       #8A4D36;
   --terracotta:    #98583F;
-  --border:        #DCD7C8;
-  --border-strong: #C6C0B0;
+  --warn-bg:       #F7EAD0;
+  --warn-fg:       #8C4408;
+  --danger-bg:     #FCE5E2;
+  --danger-fg:     #991B1B;
+  --border:        #D7CCB7;
+  --border-strong: #C2B49D;
 }
 
 * { box-sizing: border-box; }
@@ -250,19 +256,32 @@ a { color: var(--accent); text-underline-offset: 3px; }
 }
 .brand-en {
   font-family: var(--font);
-  font-size: .62rem;
+  font-size: .72rem;
   font-weight: 600;
   letter-spacing: .24em;
   color: var(--text-sub);
   margin-top: 3px;
 }
 .brand-context {
-  margin-top: 14px;
+  margin-top: 12px;
   padding-left: 2px;
+}
+.brand-purpose {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: .8rem;
+  font-weight: 700;
+  color: var(--exam-fg);
+  background: var(--exam-bg);
+  padding: 3px 8px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  letter-spacing: -.01em;
 }
 .brand-context-date {
   display: block;
-  font-size: .76rem;
+  font-size: .8rem;
   color: var(--text-sub);
   margin-bottom: 2px;
 }
@@ -283,7 +302,7 @@ a { color: var(--accent); text-underline-offset: 3px; }
   border: none;
 }
 .nav-group-label {
-  font-size: .68rem; font-weight: 700; color: var(--text-sub);
+  font-size: .78rem; font-weight: 700; color: var(--text-sub);
   text-transform: uppercase; letter-spacing: .08em;
   padding: var(--s3) var(--s3) var(--s1);
 }
@@ -328,7 +347,7 @@ a { color: var(--accent); text-underline-offset: 3px; }
 }
 .nav-item[aria-current="page"] .ico { opacity: 1; }
 .nav-item .ico svg { display: block; width: 19px; height: 19px; }
-.nav-item.secondary { color: var(--text-sub); font-size: .88rem; min-height: 38px; }
+.nav-item.secondary { color: var(--text-sub); font-size: .9rem; min-height: 44px; }
 
 .sidebar-footer {
   border-top: 1px solid var(--border);
@@ -495,7 +514,7 @@ a { color: var(--accent); text-underline-offset: 3px; }
 }
 .btn-primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
 .btn-lg { min-height: 48px; padding: 0 var(--s6); font-size: .98rem; }
-.btn-sm { min-height: 36px; padding: 0 12px; font-size: .84rem; border-radius: 8px; }
+.btn-sm { min-height: 38px; padding: 0 12px; font-size: .86rem; border-radius: 8px; }
 .btn-danger { color: var(--danger-fg); border-color: color-mix(in srgb, var(--danger-fg) 45%, var(--border)); }
 .btn-ghost { border-color: transparent; background: transparent; color: var(--text-sub); }
 .btn-ghost:hover { background: var(--surface-soft); color: var(--text); }
@@ -545,6 +564,7 @@ a { color: var(--accent); text-underline-offset: 3px; }
 .tag-exam { background: var(--exam-bg); color: var(--exam-fg); }
 .tag-acad { background: var(--acad-bg); color: var(--acad-fg); }
 .tag-warn { background: var(--warn-bg); color: var(--warn-fg); }
+.tag-danger { background: var(--danger-bg); color: var(--danger-fg); }
 .tag-muted { background: var(--surface-soft); color: var(--text-sub); border: 1px solid var(--border); }
 
 .badge-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
@@ -806,7 +826,25 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.72; }
   border: 1px solid color-mix(in srgb, var(--terracotta) 22%, var(--border));
 }
 .acad-alert-card h3 { color: var(--text); }
-.acad-due-accent { color: var(--terracotta); font-weight: 700; font-size: .82rem; }
+.acad-due-accent {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 700;
+  font-size: .82rem;
+  color: var(--text-sub);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.acad-due-accent.urgent {
+  color: var(--danger-fg);
+  background: var(--danger-bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger-fg) 25%, transparent);
+}
+.acad-due-accent.warn {
+  color: var(--warn-fg);
+  background: var(--warn-bg);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--warn-fg) 25%, transparent);
+}
 
 /* =========================================================================
    단권화 서재 3영역 워크스페이스 (제안서 7쪽 + 원문 나란히 읽기)
@@ -1314,28 +1352,52 @@ body.exam-sim-active .ai-widget-root { display: none !important; }
 .divider { height: 1px; background: var(--border); margin: var(--s5) 0; border: none; }
 
 /* =========================================================================
-   전역 우측 AI 보조 패널 (기본 접기 · 맥락 진입 지원 — 제안서 4·11쪽)
+   전역 우측 AI 보조 패널 (콤팩트 원형 런처 · 학업 카드 가림 방지 — 보고서 2·3쪽)
    ========================================================================= */
 .ai-widget-root {
   position: fixed;
-  right: 20px;
-  bottom: 64px;
+  right: 22px;
+  bottom: 22px;
   z-index: 120;
 }
 .ai-widget-root.hidden { display: none !important; }
 
+/* 44px 콤팩트 원형 아이콘 플로팅 런처 */
 .ai-fab {
-  display: inline-flex; align-items: center; gap: 7px;
-  min-height: 44px; padding: 0 16px;
-  border-radius: 999px; border: 1px solid var(--border-strong);
-  background: var(--surface-pure); color: var(--text);
-  font-family: var(--font); font-size: .88rem; font-weight: 700;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-pure);
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  box-shadow: 0 4px 18px rgba(20, 35, 28, .12);
-  transition: transform .14s, border-color .14s, background .14s;
+  box-shadow: 0 4px 18px rgba(20, 35, 28, .14);
+  transition: transform .14s, border-color .14s, background .14s, box-shadow .14s;
 }
-.ai-fab:hover { border-color: var(--accent); background: var(--exam-bg); color: var(--exam-fg); transform: translateY(-1px); }
-.ai-fab .ico { width: 17px; height: 17px; display: inline-flex; align-items: center; justify-content: center; color: var(--accent); }
+.ai-fab:hover {
+  border-color: var(--accent);
+  background: var(--exam-bg);
+  color: var(--exam-fg);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 22px rgba(20, 35, 28, .18);
+}
+.ai-fab .ico {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ai-fab .ico svg {
+  width: 20px;
+  height: 20px;
+}
 
 .ai-mini {
   width: 368px;
@@ -1471,6 +1533,72 @@ body.exam-sim-active .ai-widget-root { display: none !important; }
 
 @media (min-width: 768px) { .mobile-only { display: none !important; } }
 
+/* =========================================================================
+   테마 미리보기 스와치 칩 (보고서 1·3쪽: 웜 페이퍼 한지 강화 & 직관적 미리보기)
+   ========================================================================= */
+.theme-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.theme-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font);
+  transition: border-color .15s, box-shadow .15s, transform .12s, background .15s;
+}
+.theme-chip:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+.theme-chip.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--surface-pure);
+}
+.theme-chip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.theme-chip-title {
+  font-weight: 700;
+  font-size: .94rem;
+  color: var(--text);
+}
+.theme-swatch-row {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.theme-swatch-circle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, .14);
+  flex: none;
+}
+.theme-chip-desc {
+  font-size: .8rem;
+  color: var(--text-sub);
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* 홈 우측 레일 카드 하단 안전 여백 (우하단 플로팅 AI 런처 가림 방지) */
+.grid-7to3 > div:last-child {
+  padding-bottom: 56px;
+}
+
 @media (max-width: 1199px) {
   .app { grid-template-columns: 1fr; }
   .sidebar {
@@ -1531,7 +1659,7 @@ body.exam-sim-active .ai-widget-root { display: none !important; }
     background: none;
     color: var(--text-sub);
     font-family: var(--font);
-    font-size: .72rem;
+    font-size: .78rem; /* 약 12.5px로 모바일 가독성 상향 (보고서 2·3쪽) */
     font-weight: 600;
     display: flex;
     flex-direction: column;
@@ -1543,7 +1671,12 @@ body.exam-sim-active .ai-widget-root { display: none !important; }
   .mob-tab .ico { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; }
   .mob-tab[aria-current="page"] { color: var(--accent); font-weight: 700; }
 
-  .ai-widget-root { right: 12px; bottom: 74px; }
+  /* 모바일 최소 44px 조작 터치 타깃 보장 (보고서 2·3쪽) */
+  .btn-sm { min-height: 44px; padding: 0 14px; font-size: .88rem; }
+  .pill { min-height: 44px; padding: 0 16px; font-size: .88rem; }
+  .hint { font-size: .82rem; }
+
+  .ai-widget-root { right: 14px; bottom: 68px; }
   .ai-mini { width: calc(100vw - 24px); height: min(68vh, 470px); }
   .toast-wrap { bottom: 76px; right: 12px; left: 12px; max-width: none; }
 }

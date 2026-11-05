@@ -1,4 +1,4 @@
-﻿/* =========================================================================
+/* =========================================================================
    변리사 2차 수험 홈페이지 — 단일 번들
    file:// 로 더블클릭해서 바로 열 수 있도록 ES 모듈 없이 하나의 IIFE로 구성.
    기획 보고서(2026-11-01) P0 범위 전체 + 접근성/백업 반영.
@@ -62,10 +62,21 @@
     split:   '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
     sound:   '<path d="M11 5L6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 6a8.5 8.5 0 0 1 0 12"/>',
     mute:    '<path d="M11 5L6 9H3v6h3l5 4V5z"/><path d="M22 9l-6 6M16 9l6 6"/>',
+    star:    '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
+    starFill:'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" fill="currentColor"/>',
+    play:    '<polygon points="6 4 20 12 6 20 6 4" fill="currentColor" stroke="none"/>',
+    lock:    '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+    sparkle: '<path d="M12 3v3m0 12v3M3 12h3m12 0h3m-2.6-6.4l-2.1 2.1m-8.6 8.6l-2.1 2.1m0-12.8l2.1 2.1m8.6 8.6l2.1 2.1"/>',
+    alert:   '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+    check:   '<polyline points="20 6 9 17 4 12"/>',
+    print:   '<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
+    refresh: '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
+    close:   '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
   };
-  function svgIcon(name) {
+  function svgIcon(name, size) {
+    const s = size || 20;
     const span = el('span', { class: 'ico', 'aria-hidden': 'true' });
-    span.innerHTML = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' + (ICON_PATHS[name] || '') + '</svg>';
+    span.innerHTML = '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">' + (ICON_PATHS[name] || '') + '</svg>';
     return span;
   }
 
@@ -1388,7 +1399,7 @@
       el('button', {
         class: 'btn btn-sm',
         onclick: function () { openCoreBundleModal(ctx); },
-      }, '★ 핵심 쟁점 묶음'),
+      }, [svgIcon('starFill', 14), ' 핵심 쟁점 묶음']),
     );
 
     root.append(el('header', { class: 'page-hero' }, [
@@ -1500,11 +1511,26 @@
         const course = d.courses.find(function (c) { return c.id === a.courseId; });
         const cLabel = (course && course.name) || a.courseName || '대학 강좌';
         const dueDays = a.due ? Math.ceil((new Date(a.due) - new Date()) / 86400000) : null;
-        const dueBadge = dueDays != null ? (dueDays <= 0 ? '오늘 마감' : 'D-' + dueDays) : fmtDate(a.due);
+        let dueText = a.due ? fmtDate(a.due) : '마감 미정';
+        let dueClass = 'acad-due-accent';
+        if (dueDays != null) {
+          if (dueDays <= 0) {
+            dueText = '오늘 마감';
+            dueClass = 'acad-due-accent urgent';
+          } else if (dueDays === 1) {
+            dueText = '내일 마감';
+            dueClass = 'acad-due-accent urgent';
+          } else if (dueDays === 2) {
+            dueText = 'D-2 마감 임박';
+            dueClass = 'acad-due-accent warn';
+          } else {
+            dueText = 'D-' + dueDays;
+          }
+        }
         ul.append(el('div', { style: 'padding-bottom:8px;border-bottom:1px solid rgba(152,88,63,.15)' }, [
           el('div', { class: 'row between', style: 'gap:6px' }, [
-            el('span', { style: 'font-size:.76rem;color:var(--acad-fg);font-weight:600' }, cLabel),
-            el('span', { class: 'acad-due-accent' }, dueBadge),
+            el('span', { style: 'font-size:.82rem;color:var(--acad-fg);font-weight:600' }, cLabel),
+            el('span', { class: dueClass }, dueText),
           ]),
           el('div', { style: 'font-weight:700;font-size:.9rem;margin-top:2px;color:var(--text)' }, a.title),
         ]));
@@ -1550,7 +1576,7 @@
         el('h2', { class: 'now-study-title' }, running.title || '수험 공부'),
         el('div', { class: 'now-study-meta' }, (running.pausedAt ? '일시정지 상태 · ' : '목표 ' + (running.goalMin || 50) + '분 · ') + '집중 화면에서 몰입을 이어가세요.'),
         el('div', { class: 'now-study-actions' }, [
-          el('button', { class: 'btn btn-primary btn-lg', onclick: function () { Timer.openOverlay(); } }, '▶ 집중 화면 열기'),
+          el('button', { class: 'btn btn-primary btn-lg', onclick: function () { Timer.openOverlay(); } }, [svgIcon('play', 18), ' 집중 화면 열기']),
           el('button', { class: 'btn', onclick: function () { Timer.stop(); ctx.refresh(); } }, '세션 종료 · 기록'),
         ]),
       );
@@ -1579,10 +1605,18 @@
       main.append(
         el('div', { class: 'row' }, [el('span', { class: 'tag tag-exam' }, '지금 할 공부')]),
         el('h2', { class: 'now-study-title' }, '오늘 집중할 첫 공부를 골라 보세요'),
-        el('div', { class: 'now-study-meta' }, '주간 계획에서 수험 블록을 배치하거나 핵심 과업을 지정하면 이곳에서 바로 시작할 수 있습니다.'),
+        el('div', { class: 'now-study-meta' }, '부담 없이 25분 집중을 바로 시작하거나, 핵심 과업 또는 주간 계획에서 블록을 지정하세요.'),
         el('div', { class: 'now-study-actions' }, [
-          el('button', { class: 'btn btn-primary', onclick: function () { openTaskEditor(null, ctx, { pinToday: true }); } }, '+ 핵심 과업 만들기'),
-          el('button', { class: 'btn', onclick: function () { ctx.navigate('week'); } }, '주간 계획 열기'),
+          el('button', {
+            class: 'btn btn-primary btn-lg',
+            onclick: function () {
+              Timer.start(null, null, '25분 자유 집중', { goalMin: 25, subtitle: '첫 공부 빠른 실행' });
+              ctx.refresh();
+              Timer.openOverlay();
+            },
+          }, [svgIcon('play', 18), ' 25분 집중 시작']),
+          el('button', { class: 'btn', onclick: function () { openTaskEditor(null, ctx, { pinToday: true }); } }, '+ 핵심 과업 만들기'),
+          el('button', { class: 'btn btn-ghost', onclick: function () { ctx.navigate('week'); } }, '주간 계획 열기'),
         ]),
       );
       card.append(main, paperNotebookIllustEl());
@@ -1621,7 +1655,7 @@
         Timer.start(task ? task.id : null, subjectId, title, { goalMin: goalMin, subtitle: timeLabel || '' });
         ctx.refresh();
       },
-    }, '▶ 집중 시작'));
+    }, [svgIcon('play', 18), ' 집중 시작']));
 
     actions.append(el('button', {
       class: 'btn',
@@ -1851,10 +1885,10 @@
     const weakCards = d.cards.filter(function (c) { return c.status === 'active' && ((c.lapses || 0) > 0 || (c.interval || 1) <= 1); }).slice(0, 6);
 
     const body = el('div', { class: 'stack', style: 'gap:16px' });
-    body.append(el('p', { class: 'hint' }, '별표(★) 표시하거나 재확인이 필요한 서재 노트, 반복 감점 답안, 취약 복습 카드를 한곳에 모았습니다.'));
+    body.append(el('p', { class: 'hint' }, '핵심 표시하거나 재확인이 필요한 서재 노트, 반복 감점 답안, 취약 복습 카드를 한곳에 모았습니다.'));
 
     const sec1 = el('div', { class: 'stack', style: 'gap:6px' }, [el('strong', {}, '1. 핵심·재확인 서재 노트 (' + starredNotes.length + ')')]);
-    if (starredNotes.length === 0) sec1.append(el('p', { class: 'hint' }, '단권화 서재에서 ★ 핵심 표시를 누르면 여기에 모입니다.'));
+    if (starredNotes.length === 0) sec1.append(el('p', { class: 'hint' }, '단권화 서재에서 핵심 지정을 누르면 여기에 모입니다.'));
     starredNotes.slice(0, 8).forEach(function (n) {
       const sub = Store.subject(n.subjectId);
       sec1.append(el('button', {
@@ -1862,7 +1896,7 @@
         onclick: function () { m.close(); openNoteById(n.id, ctx); },
       }, [
         el('div', { class: 'main' }, [
-          el('div', { class: 'title' }, '★ ' + n.title),
+          el('div', { class: 'title', style: 'display:flex;align-items:center;gap:6px' }, [svgIcon('starFill', 14), n.title]),
           el('div', { class: 'meta' }, (sub ? sub.name + ' · ' : '') + (n.issue || '쟁점 미지정')),
         ]),
         el('span', { class: 'hint' }, '열기 →'),
@@ -1878,7 +1912,7 @@
       sec2.append(el('div', { class: 'item' }, [
         el('div', { class: 'main' }, [
           el('div', { class: 'title' }, (sub ? '[' + sub.name + '] ' : '') + aTitle),
-          el('div', { class: 'meta', style: 'color:var(--terracotta)' }, aDed),
+          el('div', { class: 'meta', style: 'color:var(--danger-fg)' }, aDed),
         ]),
       ]));
     });
@@ -1968,7 +2002,7 @@
       ]),
       isRunning
         ? el('button', { class: 'btn btn-primary btn-sm', onclick: function () { Timer.openOverlay(); } }, '집중 화면')
-        : el('button', { class: 'btn btn-primary btn-sm', onclick: function () { Timer.start(t.id, t.subjectId, t.title, { goalMin: t.estMin || 50 }); ctx.refresh(); } }, '▶ 집중'),
+        : el('button', { class: 'btn btn-primary btn-sm', onclick: function () { Timer.start(t.id, t.subjectId, t.title, { goalMin: t.estMin || 50 }); ctx.refresh(); } }, [svgIcon('play', 14), ' 집중']),
       el('button', { class: 'btn btn-sm', onclick: function () { openTaskEditor(t, ctx); } }, '편집'),
     ]);
   }
@@ -2479,7 +2513,7 @@
         el('h1', { class: 'page-title' }, '주간 계획'),
       ]),
       el('div', { class: 'row no-print', style: 'gap:8px' }, [
-        el('button', { class: 'btn btn-sm', onclick: function () { window.print(); } }, '🖨 주간 인쇄'),
+        el('button', { class: 'btn btn-sm', onclick: function () { window.print(); } }, [svgIcon('print', 15), ' 주간 인쇄']),
       ]),
     ]));
 
@@ -2639,7 +2673,6 @@
     const b = seg.block;
     const kind = blockKind(d, b);
     const sub = Store.subject(b.subjectId);
-    const label = (b.locked ? '🔒 ' : '') + (b.title || (sub ? sub.name : '블록'));
     const timeText = fmtTime(b.start) + '~' + fmtTime(b.end);
 
     // 백분율로 배치해 화면 높이가 바뀌어도 시간 칸과 블록이 함께 늘고 줄어듭니다.
@@ -2656,13 +2689,18 @@
     const cls = 'tt-block ' + kind + (b.source === 'commute' ? ' commute' : '');
     const style = 'top:calc(' + topPct + '% + 1px);height:max(16px, calc(' + heightPct + '% - 2px));left:' + leftExpr + ';width:' + widthExpr + ';';
 
-    const children = [el('span', { class: 'tt-block-title' }, label), el('span', { class: 'tt-block-time' }, timeText)];
+    const titleEl = el('span', { class: 'tt-block-title', style: 'display:inline-flex;align-items:center;gap:3px' }, [
+      b.locked ? svgIcon('lock', 11) : null,
+      b.title || (sub ? sub.name : '블록'),
+    ].filter(Boolean));
+    const children = [titleEl, el('span', { class: 'tt-block-time' }, timeText)];
 
+    const titleAttr = (b.locked ? '[보호] ' : '') + (b.title || (sub ? sub.name : '블록')) + ' (' + timeText + ')';
     return el('button', {
       class: cls,
       style: style,
-      title: (b.title || (sub ? sub.name : '블록')) + ' (' + timeText + ')',
-      'aria-label': label + ' ' + timeText,
+      title: titleAttr,
+      'aria-label': titleAttr,
       onclick: function (e) { e.stopPropagation(); openBlockEditor(null, ctx, null, { editBlock: b }); },
     }, children);
   }
@@ -2713,7 +2751,10 @@
           card.append(el('div', { class: 'item', style: 'cursor:pointer', onclick: function () { openBlockEditor(null, ctx, null, { editBlock: b }); } }, [
             el('span', { class: 'tag tag-' + (kind === 'exam' ? 'exam' : kind === 'acad' ? 'acad' : 'muted') }, tagLabel),
             el('div', { class: 'main' }, [
-              el('div', { class: 'title' }, (b.locked ? '🔒 ' : '') + b.title),
+              el('div', { class: 'title', style: 'display:inline-flex;align-items:center;gap:4px' }, [
+                b.locked ? svgIcon('lock', 13) : null,
+                b.title,
+              ].filter(Boolean)),
               el('div', { class: 'meta' }, fmtTime(b.start) + '–' + fmtTime(b.end) + ' (' + fmtMin(minutesBetween(b.start, b.end)) + ')'),
             ]),
           ]));
@@ -2819,7 +2860,13 @@
         const kind = blockKind(d, x);
         list.append(el('div', { class: 'item' }, [
           el('span', { class: 'tag tag-' + (kind === 'exam' ? 'exam' : kind === 'acad' ? 'acad' : 'muted') }, kind === 'exam' ? '수험' : kind === 'acad' ? '학업' : '기타'),
-          el('div', { class: 'main' }, [el('div', { class: 'title' }, (x.locked ? '🔒 ' : '') + (x.title || '블록')), el('div', { class: 'meta' }, fmtTime(x.start) + '~' + fmtTime(x.end))]),
+          el('div', { class: 'main' }, [
+            el('div', { class: 'title', style: 'display:inline-flex;align-items:center;gap:4px' }, [
+              x.locked ? svgIcon('lock', 13) : null,
+              x.title || '블록',
+            ].filter(Boolean)),
+            el('div', { class: 'meta' }, fmtTime(x.start) + '~' + fmtTime(x.end)),
+          ]),
         ]));
       });
       const hasLocked = overlaps.some(function (x) { return x.locked; });
@@ -2828,7 +2875,7 @@
         body: el('div', {}, [
           el('p', {}, '추가하려는 ' + fmtTime(t.startIso) + '~' + fmtTime(t.endIso) + ' 블록이 아래 ' + overlaps.length + '개와 겹칩니다.'),
           list,
-          hasLocked ? el('p', { class: 'hint', style: 'color:var(--warn-fg)' }, '🔒 수동 잠금 블록과 겹칩니다. 보호된 공부 시간을 덮어쓰지 않도록 시간 변경을 권장합니다.') : null,
+          hasLocked ? el('p', { class: 'hint', style: 'color:var(--warn-fg);display:flex;align-items:center;gap:4px' }, [svgIcon('lock', 13), ' 수동 잠금 블록과 겹칩니다. 보호된 공부 시간을 덮어쓰지 않도록 시간 변경을 권장합니다.']) : null,
           el('p', { class: 'hint' }, '"수험 보호"는 자동 보호가 아니라, 사용자가 지키려는 시간을 표시하는 것입니다.'),
         ]),
         footer: [
@@ -3650,27 +3697,30 @@
 
     const clockEl = el('div', { style: 'font-family:var(--font-serif);font-size:2.3rem;font-weight:700;font-variant-numeric:tabular-nums;color:var(--accent)' }, '60:00');
     const saveNote = el('div', { class: 'hint', style: 'margin-top:2px' }, '');
-    const toggleTimerBtn = el('button', { type: 'button', class: 'btn btn-primary btn-sm' }, '▶ 타이머 시작');
+    const toggleTimerBtn = el('button', { type: 'button', class: 'btn btn-primary btn-sm' }, [svgIcon('play', 14), ' 타이머 시작']);
     function updateClock() {
       const abs = Math.abs(remainSec);
       const m = String(Math.floor(abs / 60)).padStart(2, '0');
       const s = String(abs % 60).padStart(2, '0');
       clockEl.textContent = (remainSec < 0 ? '+' : '') + m + ':' + s;
-      clockEl.style.color = remainSec < 0 ? 'var(--terracotta)' : 'var(--accent)';
+      clockEl.style.color = remainSec < 0 ? 'var(--danger-fg)' : 'var(--accent)';
     }
     function stopTick() { if (simTick) { clearInterval(simTick); simTick = null; } }
     toggleTimerBtn.onclick = function () {
       if (simTick) {
         stopTick();
-        toggleTimerBtn.textContent = '▶ 계속';
+        toggleTimerBtn.innerHTML = '';
+        toggleTimerBtn.append(svgIcon('play', 14), ' 계속');
       } else {
         started = true;
-        toggleTimerBtn.textContent = '일시정지';
+        toggleTimerBtn.innerHTML = '';
+        toggleTimerBtn.append(svgIcon('timer', 14), ' 일시정지');
         simTick = setInterval(function () {
           remainSec--;
           if (remainSec === 0 && !overtime) {
             stopTick();
-            toggleTimerBtn.textContent = '▶ 계속';
+            toggleTimerBtn.innerHTML = '';
+            toggleTimerBtn.append(svgIcon('play', 14), ' 계속');
             updateClock();
             const tm = ctx.modal({
               title: '제한 시간 종료',
@@ -3746,7 +3796,7 @@
         });
         locked.forEach(function (f) {
           list.append(el('div', { class: 'row', style: 'gap:8px;align-items:center;justify-content:space-between;opacity:.65' }, [
-            el('div', {}, [el('span', { class: 'tag tag-muted' }, '🔒 ' + gsRoleLabel(f.role)), ' ', el('span', {}, f.name || '자료')]),
+            el('div', {}, [el('span', { class: 'tag tag-muted', style: 'display:inline-flex;align-items:center;gap:4px' }, [svgIcon('lock', 12), gsRoleLabel(f.role)]), ' ', el('span', {}, f.name || '자료')]),
             el('span', { class: 'hint' }, '채점 모드에서 열람'),
           ]));
         });
@@ -3973,7 +4023,7 @@
             promptDraft: '위 답안 목차와 감점 메모를 바탕으로 누락된 세부 논점이나 판례 포섭 보완점을 짚어줘.',
           });
         },
-      }, '✨ 누락된 논점 AI 점검'));
+      }, [svgIcon('sparkle', 15), ' 누락된 논점 AI 점검']));
     }
     issueInput.oninput = rebuildLinkRow;
     subjSel.addEventListener('change', rebuildLinkRow);
@@ -4215,7 +4265,10 @@
                 renderTree();
               },
             }, [
-              el('span', { style: 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%' }, (starredSet.has(n.id) ? '★ ' : '') + (n.title || '(제목 없음)')),
+              el('span', { style: 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%;display:inline-flex;align-items:center;gap:4px' }, [
+                starredSet.has(n.id) ? svgIcon('starFill', 13) : null,
+                n.title || '(제목 없음)',
+              ].filter(Boolean)),
               el('span', { style: 'font-size:.73rem;opacity:.8' }, (n.issue ? n.issue + ' · ' : '') + statLabel),
             ]);
             treeBody.append(btn);
@@ -4434,7 +4487,7 @@
             refreshTree();
             refreshAll();
           },
-        }, isStarred ? '★ 핵심' : '☆ 핵심'),
+        }, [svgIcon(isStarred ? 'starFill' : 'star', 15), isStarred ? ' 핵심' : ' 핵심 지정']),
         !noteEditMode ? el('button', {
           type: 'button',
           class: 'btn btn-sm btn-ghost',
@@ -4715,7 +4768,7 @@
         drafts.length ? stat('초안 대기', drafts.length + '개', 'var(--text-sub)') : null,
       ]),
       due.length
-        ? el('button', { class: 'btn btn-primary btn-lg', onclick: function () { startSession(todayDue, ctx); } }, '▶ 오늘의 복습 시작 (' + todayDue.length + ')')
+        ? el('button', { class: 'btn btn-primary btn-lg', onclick: function () { startSession(todayDue, ctx); } }, [svgIcon('play', 18), ' 오늘의 복습 시작 (' + todayDue.length + ')'])
         : el('span', { class: 'tag tag-exam' }, '오늘 복습 완료'),
     ]));
     root.append(summary);
@@ -4996,7 +5049,7 @@
         el('div', { class: 'hint', style: 'font-size:.8rem;margin-top:6px' }, syncHint),
       ]),
       el('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' }, [
-        el('button', { class: 'btn btn-primary', onclick: function () { triggerLearnUsSync(ctx); } }, '🔄 LearnUs 자동 동기화'),
+        el('button', { class: 'btn btn-primary', onclick: function () { triggerLearnUsSync(ctx); } }, [svgIcon('refresh', 16), ' LearnUs 자동 동기화']),
         extReady ? el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { openLearnUsSyncModal(ctx); } }, '수동·안내') : null,
       ]),
     ]));
@@ -5142,7 +5195,7 @@
       el('h2', {}, (assignmentShowArchived ? '보관 과제 ' : '과제·할일 ') + showing.length + '개'),
       el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
         archivedAsg.length ? el('button', { class: 'btn btn-sm' + (assignmentShowArchived ? ' btn-primary' : ''), onclick: function () { assignmentShowArchived = !assignmentShowArchived; ctx.refresh(); } }, assignmentShowArchived ? '진행 과제 보기' : '보관함 (' + archivedAsg.length + ')') : null,
-        el('button', { class: 'btn btn-sm', onclick: function () { triggerLearnUsSync(ctx); } }, '🔄 LearnUs 불러오기'),
+        el('button', { class: 'btn btn-sm', onclick: function () { triggerLearnUsSync(ctx); } }, [svgIcon('refresh', 14), ' LearnUs 불러오기']),
         el('button', { class: 'btn btn-primary', onclick: function () { openAssignmentEditor(null, ctx); } }, '+ 과제 추가'),
       ]),
     ]));
@@ -5184,7 +5237,14 @@
         el('div', { class: 'main', style: 'cursor:pointer', onclick: function () { openAssignmentEditor(a, ctx); } }, [
           el('div', { class: 'row', style: 'gap:6px;align-items:center;flex-wrap:wrap' }, [
             courseLabel ? el('span', { class: 'tag tag-acad' }, courseLabel) : null,
-            overdue ? el('span', { class: 'tag tag-warn' }, '마감 지남') : null,
+            overdue ? el('span', { class: 'tag tag-danger' }, '마감 지남') : null,
+            (!overdue && !a.submitted && a.due) ? (function () {
+              const dDays = Math.ceil((new Date(a.due) - new Date()) / 86400000);
+              if (dDays <= 0) return el('span', { class: 'tag tag-danger' }, '오늘 마감');
+              if (dDays === 1) return el('span', { class: 'tag tag-warn' }, '내일 마감');
+              if (dDays === 2) return el('span', { class: 'tag tag-warn' }, 'D-2 마감 임박');
+              return null;
+            })() : null,
             a.archived ? el('span', { class: 'tag tag-muted' }, '보관') : null,
             el('span', { class: 'title' }, a.title),
           ]),
@@ -5254,8 +5314,8 @@
       root.append(el('div', { class: 'empty' }, [
         el('span', { class: 'emoji' }, '📢'),
         el('h3', {}, '아직 불러온 공지사항이 없습니다'),
-        el('p', {}, '상단의 "🔄 LearnUs 자동 동기화" 버튼을 눌러 모든 수강 강좌의 최신 공지사항과 시험·과제 안내를 한 번에 가져오세요.'),
-        el('button', { class: 'btn btn-primary', onclick: function () { triggerLearnUsSync(ctx); } }, '🔄 LearnUs에서 공지·과제 가져오기'),
+        el('p', {}, '상단의 "LearnUs 자동 동기화" 버튼을 눌러 모든 수강 강좌의 최신 공지사항과 시험·과제 안내를 한 번에 가져오세요.'),
+        el('button', { class: 'btn btn-primary', onclick: function () { triggerLearnUsSync(ctx); } }, [svgIcon('refresh', 16), ' LearnUs에서 공지·과제 가져오기']),
       ]));
       return;
     }
@@ -5403,7 +5463,7 @@
       box.style.cssText = 'position:fixed;right:20px;top:20px;z-index:2147483647;width:360px;max-width:92vw;background:#fff;color:#1b2420;border:2px solid #234B3F;border-radius:14px;padding:16px;box-shadow:0 12px 36px rgba(0,0,0,.25);font-family:-apple-system,BlinkMacSystemFont,"Malgun Gothic",sans-serif;font-size:14px;line-height:1.5';
       var titleEl = document.createElement('div');
       titleEl.style.cssText = 'font-weight:800;font-size:15px;color:#234B3F;margin-bottom:6px';
-      titleEl.textContent = '🔄 나의 수험 공간 · LearnUs 동기화';
+      titleEl.textContent = '나의 수험 공간 · LearnUs 동기화';
       var statusEl = document.createElement('div');
       statusEl.style.cssText = 'color:#44524c;font-size:13px;margin-bottom:10px';
       statusEl.textContent = '1/3 강좌 목록 확인 중…';
@@ -5952,7 +6012,7 @@
         return;
       }
       _extSyncInFlight = true;
-      ctx.toast('🔄 LearnUs에서 수강 강좌·과제 마감·중요 공지를 불러오는 중입니다… (약 3~6초)', 'ok', 7000);
+      ctx.toast('LearnUs에서 수강 강좌·과제 마감·중요 공지를 불러오는 중입니다… (약 3~6초)', 'ok', 7000);
       window.postMessage({ type: 'STUDY_HOME_EXT_REQUEST_SYNC' }, window.location.origin);
       setTimeout(function () { _extSyncInFlight = false; }, 25000);
       return;
@@ -6024,7 +6084,7 @@
 
     const body = el('div', { class: 'stack', style: 'gap:12px' }, [
       el('div', { class: 'card', style: 'background:var(--exam-bg);border-color:var(--border)' }, [
-        el('div', { style: 'font-weight:700;color:var(--exam-fg);margin-bottom:4px' }, '🔒 아이디·비밀번호 입력이 필요 없습니다'),
+        el('div', { style: 'font-weight:700;color:var(--exam-fg);margin-bottom:4px;display:flex;align-items:center;gap:5px' }, [svgIcon('lock', 14), ' 아이디·비밀번호 입력이 필요 없습니다']),
         el('p', { class: 'hint', style: 'margin:0;color:var(--text)' }, '네이버 웨일 등에서 북마크 클릭 시 빈 새 탭(about:blank)이 열리는 문제 없이 100% 작동하는 아래 방법 1 또는 방법 2를 이용해 주세요.'),
       ]),
       el('div', { class: 'card' }, [
@@ -6041,7 +6101,7 @@
         el('ol', { style: 'margin:0 0 10px;padding-left:20px;font-size:.88rem;line-height:1.75;color:var(--text-sub)' }, [
           el('li', {}, '웨일 주소창에 whale://extensions (크롬은 chrome://extensions) 입력 후 이동합니다.'),
           el('li', {}, '우측 상단 "개발자 모드" 스위치를 켭니다.'),
-          el('li', {}, '"압축해제된 확장 앱 로드" 클릭 → 바탕화면 "홈페이지" 폴더 안의 "learnus-sync-extension" 폴더를 선택한 뒤 이 홈페이지를 새로고침(F5)하면, 이후부터는 "🔄 LearnUs 자동 동기화" 버튼 클릭 한 번으로 즉시 연동됩니다!'),
+          el('li', {}, '"압축해제된 확장 앱 로드" 클릭 → 바탕화면 "홈페이지" 폴더 안의 "learnus-sync-extension" 폴더를 선택한 뒤 이 홈페이지를 새로고침(F5)하면, 이후부터는 "LearnUs 자동 동기화" 버튼 클릭 한 번으로 즉시 연동됩니다!'),
         ]),
         el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [copyWhaleExtUrlBtn]),
       ]),
@@ -6129,9 +6189,13 @@
     d.courses.forEach(function (c) {
       const att = c.attendance || { present: 0, late: 0, absent: 0, latePerAbsent: 3, totalSessions: 15, absentLimit: 3 };
       const effectiveAbsent = att.absent + (att.latePerAbsent ? att.late / att.latePerAbsent : 0);
+      const danger = att.absentLimit && effectiveAbsent >= att.absentLimit;
       const risk = att.absentLimit && effectiveAbsent >= att.absentLimit * 0.7;
+      let statusTag = el('span', { class: 'tag tag-exam' }, '정상');
+      if (danger) statusTag = el('span', { class: 'tag tag-danger' }, '한도 초과');
+      else if (risk) statusTag = el('span', { class: 'tag tag-warn' }, '결석 주의');
       const card = el('div', { class: 'card' });
-      card.append(el('div', { class: 'row between' }, [el('h3', {}, c.name), risk ? el('span', { class: 'tag tag-warn' }, '주의 구간') : el('span', { class: 'tag tag-exam' }, '여유')]));
+      card.append(el('div', { class: 'row between' }, [el('h3', {}, c.name), statusTag]));
       card.append(el('div', { class: 'row', style: 'gap:16px;margin:8px 0;flex-wrap:wrap' }, [counter('출석', att, 'present', c, ctx), counter('지각', att, 'late', c, ctx), counter('결석', att, 'absent', c, ctx)]));
       card.append(el('p', { class: 'hint' }, '환산 결석 ' + Math.round(effectiveAbsent * 10) / 10 + '회 (지각 ' + att.latePerAbsent + '회 = 결석 1회 기준) · 결석 한도 ' + att.absentLimit + '회'));
       card.append(el('div', { class: 'row', style: 'gap:8px;margin-top:8px' }, [ruleInput('지각→결석 환산', att, 'latePerAbsent', c, ctx), ruleInput('결석 한도', att, 'absentLimit', c, ctx)]));
@@ -6408,7 +6472,7 @@
       ]),
       el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' }, [
         el('button', { class: 'btn btn-sm' + (lectureMaterialOpen ? ' btn-primary' : ''), onclick: function () { lectureMaterialOpen = !lectureMaterialOpen; ctx.refresh(); } }, lectureMaterialOpen ? '교재 닫기' : '교재 나란히 읽기'),
-        el('button', { class: 'btn btn-sm', onclick: function () { summarizeLectureWithAi(lec, ctx); } }, '✨ 내 기록 AI 요약'),
+        el('button', { class: 'btn btn-sm', onclick: function () { summarizeLectureWithAi(lec, ctx); } }, [svgIcon('sparkle', 14), ' 내 기록 AI 요약']),
         el('button', { class: 'btn btn-sm', onclick: function () { exportLectureMarkdown(lec, ctx); } }, '⬇ 읽기용 내보내기'),
         el('button', { class: 'btn btn-sm', onclick: function () {
           Store.update(function (dd) { const lx = dd.lectures.find(function (x) { return x.id === lec.id; }); if (lx) { lx.archived = !lx.archived; lx.updatedAt = new Date().toISOString(); } });
@@ -6823,12 +6887,12 @@
       el('label', {}, '실제 투입 시간 (순공부)'),
       el('div', { style: 'font-family:var(--font-serif);font-size:1.5rem;font-weight:700' }, fmtMin(actualMin)),
       isThisRunning
-        ? el('button', { class: 'btn btn-primary btn-block', style: 'margin-top:6px', onclick: function () { Timer.openOverlay(); } }, '▶ 집중 화면 열기 (기록 중)')
+        ? el('button', { class: 'btn btn-primary btn-block', style: 'margin-top:6px', onclick: function () { Timer.openOverlay(); } }, [svgIcon('play', 16), ' 집중 화면 열기 (기록 중)'])
         : el('button', { class: 'btn btn-block', style: 'margin-top:6px', onclick: function () {
             Timer.start(null, lec.subjectId, lec.title + (lec.nextEpisode ? ' · ' + lec.nextEpisode : ''), { subtitle: '강의 수강', lectureId: lec.id });
             Store.update(function (dd) { dd.lastLectureResume = lec.id; });
             ctx.refresh();
-          } }, '▶ 수강 시간 기록 시작'),
+          } }, [svgIcon('play', 16), ' 수강 시간 기록 시작']),
       el('p', { class: 'hint', style: 'margin-top:4px' }, '학원으로 이동해도 기록은 유지됩니다. 탭을 떠났다고 시청 완료로 처리하지 않습니다.'),
     ]));
 
@@ -7186,21 +7250,65 @@
     }
     root.append(examCard);
 
-    // 개인 테마 선택 (제안서 9·10쪽: 종이 아이보리 서재 / 야간 집중 / 따뜻한 한지)
+    // 개인 테마 선택 (보고서 1·3쪽: 웜 페이퍼 한지 강화 및 직관적 스와치 미리보기 칩)
     const uiCard = el('div', { class: 'card' });
     uiCard.append(el('h2', { style: 'font-family:var(--font-serif)' }, '개인 테마 및 읽기 환경'));
-    const themeSel = el('select', {});
-    [
-      ['light', '서재 기본 — 종이 아이보리 (#F5F3EC) + 잉크 그린'],
-      ['paper', '따뜻한 한지 — 눈부심을 더 낮춘 미색 서재'],
-      ['dark', '야간 집중 — 딥 그린 (#142A23) 다크 모드'],
-    ].forEach(function (p) { themeSel.append(el('option', { value: p[0], selected: p[0] === d.settings.theme }, p[1])); });
-    themeSel.onchange = function () {
-      Store.update(function (dd) { dd.settings.theme = themeSel.value; });
-      document.documentElement.setAttribute('data-theme', themeSel.value);
-      ctx.toast('서재 테마를 변경했습니다.');
-    };
-    uiCard.append(el('div', { class: 'field', style: 'margin:0' }, [el('label', {}, '색상 테마'), themeSel]));
+    uiCard.append(el('p', { class: 'hint', style: 'margin-bottom:12px' }, '장시간 수험 학습에 맞춰 눈의 피로를 줄여 주는 서재 테마를 선택하세요.'));
+
+    const themeDefs = [
+      {
+        key: 'light',
+        name: '서재 기본 (종이 아이보리)',
+        desc: '차분한 종이 아이보리(#F5F3EC)와 잉크 그린의 자연스러운 주간 학습 환경',
+        swatches: ['#F5F3EC', '#FCFBF7', '#244C3D', '#E6ECDF'],
+      },
+      {
+        key: 'paper',
+        name: '웜 페이퍼 (한지)',
+        desc: '기본 아이보리 대비 눈부심을 더 낮추고 포근한 온도를 더한 따뜻한 한지 미색',
+        swatches: ['#EDE6D6', '#F9F3E5', '#244C3D', '#DFE8D7'],
+      },
+      {
+        key: 'dark',
+        name: '야간 집중 (딥 그린)',
+        desc: '깊은 녹음 서재(#142A23)에서 오직 글씨에만 몰입하는 고대비 저자극 야간 모드',
+        swatches: ['#142A23', '#1B352C', '#578C73', '#D6E6CA'],
+      },
+    ];
+
+    const currentTheme = d.settings.theme || 'light';
+    const gridEl = el('div', { class: 'theme-picker-grid' });
+
+    function applyThemeSelection(k) {
+      Store.update(function (dd) { dd.settings.theme = k; });
+      document.documentElement.setAttribute('data-theme', k);
+      gridEl.querySelectorAll('.theme-chip').forEach(function (btn) {
+        btn.classList.toggle('active', btn.getAttribute('data-theme-key') === k);
+      });
+      ctx.toast('서재 테마를 변경했습니다: ' + (themeDefs.find(function (t) { return t.key === k; }) || {}).name);
+    }
+
+    themeDefs.forEach(function (t) {
+      const swatchesEl = el('div', { class: 'theme-swatch-row' });
+      t.swatches.forEach(function (col) {
+        swatchesEl.append(el('span', { class: 'theme-swatch-circle', style: 'background:' + col }));
+      });
+      const chip = el('button', {
+        type: 'button',
+        class: 'theme-chip' + (currentTheme === t.key ? ' active' : ''),
+        'data-theme-key': t.key,
+        onclick: function () { applyThemeSelection(t.key); },
+      }, [
+        el('div', { class: 'theme-chip-header' }, [
+          el('span', { class: 'theme-chip-title' }, t.name),
+          swatchesEl,
+        ]),
+        el('p', { class: 'theme-chip-desc' }, t.desc),
+      ]);
+      gridEl.append(chip);
+    });
+
+    uiCard.append(gridEl);
     root.append(uiCard);
 
     // AI는 각 서비스의 웹페이지에서 사용한다.
@@ -7397,9 +7505,10 @@
     if (app) app.classList.toggle('ai-docked', isDocked);
     if (!isOpen) {
       root.append(el('button', {
-        type: 'button', class: 'ai-fab', 'aria-label': 'AI 도우미 열기',
+        type: 'button', class: 'ai-fab', 'aria-label': 'AI 학습 도우미 열기',
+        title: 'AI 학습 도우미 열기',
         onclick: function () { AiStore.setWidgetOpen(true); renderAiWidget({ focus: true }); },
-      }, [svgIcon('ai'), 'AI 도우미']));
+      }, [svgIcon('ai', 20)]));
       return;
     }
     const panel = el('section', { class: 'ai-mini ai-web-mini', 'aria-label': 'AI 웹페이지 바로가기' });
@@ -7416,7 +7525,7 @@
         }, [svgIcon('expand')]),
         el('button', { type: 'button', class: 'ai-icon-btn', 'aria-label': 'AI 도우미 닫기',
           title: '닫기', onclick: function () { AiStore.setWidgetOpen(false); renderAiWidget(); const launcher = root.querySelector('.ai-fab'); if (launcher) launcher.focus(); },
-        }, '✕'),
+        }, [svgIcon('close', 16)]),
       ]),
     ]));
     const body = el('div', { class: 'ai-mini-body' }, [
@@ -7625,6 +7734,7 @@
         ]),
       ]),
       el('div', { class: 'brand-context' }, [
+        el('div', { class: 'brand-purpose' }, '변리사 2차 수험실'),
         sidebarDate,
         sidebarTime,
       ]),
@@ -7716,7 +7826,7 @@
       el('div', { style: 'font-family:var(--font-serif);font-size:1.15rem;font-weight:700;color:var(--text)' }, '생각이 답안이 되는 공간, 논결(NONGYEOL)'),
       el('p', { style: 'margin:0' }, '변리사 2차 수험을 1순위, 대학 학업을 2순위로 정돈하는 개인 학습 서재입니다.'),
       el('ul', { style: 'color:var(--text-sub);font-size:.9rem;line-height:1.85;margin:4px 0;padding-left:20px' }, [
-        el('li', {}, '오늘의 공부: 확보한 블록에서 바로 ▶ 집중 시작 (조용한 집중 화면 지원)'),
+        el('li', {}, '오늘의 공부: 확보한 블록에서 바로 집중 시작 (조용한 집중 화면 지원)'),
         el('li', {}, '단권화 서재: 3영역 레이아웃 + 원문 나란히 읽기 + 선택 문단 복습 카드화'),
         el('li', {}, '답안 연습: 실전 작성 모드(AI·단서 숨김)와 채점·재작성 비교 분리'),
         el('li', {}, '대학 학업: 연세 LearnUs 과제 마감 및 중요 공지 자동 연동'),
