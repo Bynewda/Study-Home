@@ -3301,6 +3301,25 @@
             Store.update(function (dd) { const g = dd.gsSets.find(function (x) { return x.id === set.id; }); if (g) { g.archived = !g.archived; g.updatedAt = new Date().toISOString(); } });
             close(); ctx.refresh(); ctx.toast(set.archived ? '보관을 해제했습니다' : '회차를 보관했습니다');
           } },
+        { label: '삭제', danger: true, onClick: function (close) {
+            const attempts = (Store.data().answers || []).filter(function (a) { return a.gsSetId === set.id; });
+            const warn = '이 GS 회차를 완전히 삭제할까요? 등록한 문항·배점·자료 연결이 모두 사라지며 되돌릴 수 없습니다.'
+              + (attempts.length ? '\n\n연결된 작성·채점 기록 ' + attempts.length + '건은 삭제되지 않고, 회차 연결만 끊어집니다.' : '');
+            ctx.confirm(warn, { danger: true, okText: '삭제' }).then(function (ok) {
+              if (!ok) return;
+              // 세션 object-URL 정리
+              (set.files || []).forEach(function (f) {
+                if (_gsObjectUrls[f.id]) { try { URL.revokeObjectURL(_gsObjectUrls[f.id]); } catch (e) {} delete _gsObjectUrls[f.id]; }
+              });
+              Store.update(function (dd) {
+                dd.gsSets = (dd.gsSets || []).filter(function (x) { return x.id !== set.id; });
+                // 삭제된 회차를 참조하던 답안·강의의 연결 해제 (기록 자체는 보존)
+                (dd.answers || []).forEach(function (a) { if (a.gsSetId === set.id) { a.gsSetId = null; } });
+                (dd.lectures || []).forEach(function (l) { if (l.gsSetId === set.id) { l.gsSetId = null; } });
+              });
+              close(); ctx.refresh(); ctx.toast('GS 회차를 삭제했습니다');
+            });
+          } },
         { label: '⏱ 실전 작성', primary: true, onClick: function (close) { close(); startGsAttempt(Store.data().gsSets.find(function (x) { return x.id === set.id; }) || set, ctx); } },
         { label: '닫기', onClick: function (close) { close(); ctx.refresh(); } },
       ],
