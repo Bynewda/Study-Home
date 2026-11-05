@@ -3169,6 +3169,16 @@
       maxSum ? el('span', { class: 'tag tag-muted' }, '총 ' + maxSum + '점') : null,
       el('span', { class: 'tag tag-muted' }, gsStudyLabel(set.studyState)),
     ]));
+
+    // 연결된 강의가 있으면 바로 이동 (상호참조)
+    const _linkedLec = set.lectureId ? (d.lectures || []).find(function (l) { return l.id === set.lectureId; }) : null;
+    if (_linkedLec) {
+      body.append(el('div', { class: 'row', style: 'gap:6px;margin-bottom:6px' }, [
+        el('button', { class: 'btn btn-sm', onclick: function () {
+          detailModal.close(); lectureSelectedId = _linkedLec.id; lectureTab = 'log'; ctx.navigate('lectures');
+        } }, '🎓 연결 강의 열기 · ' + _linkedLec.title + ' ▸'),
+      ]));
+    }
     // 자료 저장 방식에 맞춘 안내 — 드라이브 자료는 기기 간 공유됨 / 로컬 자료는 이 기기 전용
     const _gsFiles = set.files || [];
     const _hasDrive = _gsFiles.some(function (f) { return f.source === 'drive'; });
@@ -3198,7 +3208,10 @@
       filesWrap.innerHTML = '';
       filesWrap.append(el('div', { class: 'row', style: 'justify-content:space-between;align-items:center' }, [
         el('h3', { style: 'margin:6px 0' }, '자료'),
-        el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openGsFileAttach(set.id, ctx, renderFiles); } }, '+ 자료 추가'),
+        el('div', { class: 'row', style: 'gap:6px' }, [
+          el('button', { class: 'btn btn-sm btn-ghost', onclick: function () { exportGsSet(Store.data().gsSets.find(function (x) { return x.id === set.id; }) || set, ctx); } }, '⬇ 내보내기'),
+          el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openGsFileAttach(set.id, ctx, renderFiles); } }, '+ 자료 추가'),
+        ]),
       ]));
       const cur = (Store.data().gsSets.find(function (g) { return g.id === set.id; }) || {}).files || [];
       if (!cur.length) { filesWrap.append(el('div', { class: 'hint' }, '아직 자료가 없습니다. 문제지 PDF를 등록해 보세요.')); return; }
@@ -3716,8 +3729,38 @@
         ])
       : null;
 
+    // GS 회차 자료 패널 — 실전 중에는 문제지·내 답안만 열람 가능, 예시답안·첨삭·참고는 잠금(채점 모드에서 열람)
+    let gsMaterialsPanel = null;
+    if (fromGs && gsSetId) {
+      const gsSetForSim = (d.gsSets || []).find(function (g) { return g.id === gsSetId; });
+      const simFiles = (gsSetForSim && gsSetForSim.files) || [];
+      if (simFiles.length) {
+        const visible = simFiles.filter(function (f) { return !gsRoleHidden(f.role); });
+        const locked = simFiles.filter(function (f) { return gsRoleHidden(f.role); });
+        const list = el('div', { class: 'stack', style: 'gap:6px' });
+        visible.forEach(function (f) {
+          list.append(el('div', { class: 'row', style: 'gap:8px;align-items:center;justify-content:space-between' }, [
+            el('div', {}, [el('span', { class: 'tag tag-acad' }, gsRoleLabel(f.role)), ' ', el('span', {}, f.name || '자료')]),
+            el('button', { type: 'button', class: 'btn btn-sm', onclick: function () { openGsFileViewer(gsSetId, f, ctx); } }, '열람'),
+          ]));
+        });
+        locked.forEach(function (f) {
+          list.append(el('div', { class: 'row', style: 'gap:8px;align-items:center;justify-content:space-between;opacity:.65' }, [
+            el('div', {}, [el('span', { class: 'tag tag-muted' }, '🔒 ' + gsRoleLabel(f.role)), ' ', el('span', {}, f.name || '자료')]),
+            el('span', { class: 'hint' }, '채점 모드에서 열람'),
+          ]));
+        });
+        gsMaterialsPanel = el('div', { class: 'card', style: 'margin:0' }, [
+          el('div', { style: 'font-weight:700;font-size:.9rem;margin-bottom:6px' }, '회차 자료'),
+          list,
+          locked.length ? el('p', { class: 'hint', style: 'margin:6px 0 0;color:var(--terracotta)' }, '예시답안·첨삭·참고자료는 실전 중 가려집니다. 작성을 마치고 채점 모드로 전환한 뒤 열람하세요.') : null,
+        ]);
+      }
+    }
+
     const body = el('div', { class: 'stack' }, [
       gsBanner,
+      gsMaterialsPanel,
       recoverBanner,
       el('div', { class: 'card', style: 'background:var(--exam-bg);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap' }, [
         el('div', {}, [
@@ -6801,7 +6844,91 @@
       el('p', { class: 'hint', style: 'margin-top:4px' }, '수강 완료로 바꿔도 회상은 대기로 남으며 실패로 표시하지 않습니다.'),
     ]));
 
+    // GS 자료함 연결 — 이 강의와 묶인 GS 회차로 바로 이동 (상호참조)
+    const gsBlock = el('div', { style: 'border-top:1px solid var(--border);padding-top:10px' });
+    (function buildGsBlock() {
+      const sets = (Store.data().gsSets || []);
+      const linked = lec.gsSetId ? sets.find(function (g) { return g.id === lec.gsSetId; }) : null;
+      // 이 강의를 연결 강의로 지정한 GS 회차들(gsSet.lectureId) 도 함께 표시
+      const relatedBySet = sets.filter(function (g) { return g.lectureId === lec.id && g.id !== (linked && linked.id); });
+      gsBlock.append(el('label', {}, 'GS 자료함 연결'));
+      const sel = el('select', { style: 'width:100%' });
+      sel.append(el('option', { value: '' }, '— 연결할 GS 회차 선택 —'));
+      sets.forEach(function (g) {
+        const sg = Store.subject(g.subjectId);
+        sel.append(el('option', { value: g.id, selected: g.id === lec.gsSetId }, (sg ? '[' + sg.name + '] ' : '') + (g.round ? g.round + ' ' : '') + (g.name || 'GS')));
+      });
+      sel.onchange = function () {
+        Store.update(function (dd) { const lx = dd.lectures.find(function (x) { return x.id === lec.id; }); if (lx) { lx.gsSetId = sel.value || null; lx.updatedAt = new Date().toISOString(); } });
+        ctx.refresh();
+      };
+      gsBlock.append(sel);
+      const btnRow = el('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap;margin-top:6px' });
+      if (linked) {
+        btnRow.append(el('button', { class: 'btn btn-sm btn-primary', onclick: function () { openGsSetDetail(linked.id, ctx); } }, '연결한 GS 회차 열기 ▸'));
+      }
+      relatedBySet.forEach(function (g) {
+        btnRow.append(el('button', { class: 'btn btn-sm', onclick: function () { openGsSetDetail(g.id, ctx); } }, '↗ ' + (g.round ? g.round + ' ' : '') + (g.name || 'GS')));
+      });
+      if (!sets.length) {
+        gsBlock.innerHTML = '';
+        gsBlock.append(el('label', {}, 'GS 자료함 연결'),
+          el('button', { class: 'btn btn-sm btn-ghost btn-block', onclick: function () { ctx.navigate('answers'); answersTab = 'gs'; ctx.refresh(); } }, 'GS 자료함에서 회차 먼저 만들기 →'));
+        return;
+      }
+      if (btnRow.childNodes.length) gsBlock.append(btnRow);
+      gsBlock.append(el('p', { class: 'hint', style: 'margin-top:4px' }, '이 강의의 GS 회차를 연결하면 양쪽에서 서로 바로 이동할 수 있습니다.'));
+    })();
+    card.append(gsBlock);
+
     return card;
+  }
+
+  // GS 회차 내보내기 — 회차 메타·문항·배점·자료(드라이브 링크 포함) JSON 백업
+  function exportGsSet(set, ctx) {
+    const sub = Store.subject(set.subjectId);
+    const lec = set.lectureId ? (Store.data().lectures || []).find(function (l) { return l.id === set.lectureId; }) : null;
+    const attempts = (Store.data().answers || []).filter(function (a) { return a.gsSetId === set.id; });
+    const payload = {
+      app: 'patent-study-home',
+      kind: 'gsSet',
+      schemaVersion: SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      gsSet: {
+        name: set.name, round: set.round, cohort: set.cohort, teacher: set.teacher,
+        source: set.source, dataYear: set.dataYear, goalYear: set.goalYear,
+        subject: sub ? sub.name : null,
+        linkedLecture: lec ? lec.title : null,
+        studyState: set.studyState || 'todo',
+        questions: (set.questions || []).map(function (q) {
+          return { label: q.label, title: q.title, pageRef: q.pageRef, max: q.max, subs: q.subs || [] };
+        }),
+        files: (set.files || []).map(function (f) {
+          return {
+            role: f.role, roleLabel: gsRoleLabel(f.role),
+            name: f.name, fileName: f.fileName, fileType: f.fileType,
+            pageRange: f.pageRange, note: f.note,
+            storage: f.source === 'drive' ? 'google-drive' : 'local-device',
+            driveUrl: f.source === 'drive' ? (f.driveUrl || '').replace('/preview', '/view') : null,
+            driveId: f.source === 'drive' ? f.driveId : null,
+          };
+        }),
+        attemptsSummary: attempts.map(function (a) {
+          const sumSc = (a.items || []).reduce(function (t, it) { return t + (Number(it.score) || 0); }, 0);
+          const mx = (a.items || []).reduce(function (t, it) { return t + (Number(it.max) || 0); }, 0);
+          return { date: a.date, scored: a.scored !== false, score: sumSc, max: mx, errors: a.errors || [] };
+        }),
+      },
+    };
+    try {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const safe = ((set.round ? set.round + '_' : '') + (set.name || 'GS')).replace(/[\\/:*?"<>|]/g, '').slice(0, 40);
+      a.href = url; a.download = '논결_GS_' + safe + '_' + new Date().toISOString().slice(0, 10) + '.json'; a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+      ctx.toast('GS 회차를 내보냈습니다 (드라이브 링크 포함)');
+    } catch (e) { ctx.toast('내보내기에 실패했습니다'); }
   }
 
   // 읽기용 Markdown 내보내기 (제안서 13쪽: 강의 주소·시간·쪽수 포함)
