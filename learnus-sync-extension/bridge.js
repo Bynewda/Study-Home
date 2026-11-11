@@ -1,6 +1,7 @@
 (function () {
   if (!document || !document.documentElement) return;
   document.documentElement.setAttribute('data-study-home-lu-ext', '1');
+  document.documentElement.setAttribute('data-study-home-exaone-ext', '1');
 
   var autoTriggered = false;
   function runInitialAutoSync() {
@@ -50,6 +51,40 @@
     if (e.source !== window || !e.data) return;
     if (e.data.type === 'STUDY_HOME_PAGE_READY') {
       runInitialAutoSync();
+      return;
+    }
+    if (e.data.type === 'STUDY_HOME_EXAONE_FETCH') {
+      var reqId = e.data.reqId;
+      try {
+        chrome.runtime.sendMessage({
+          type: 'EXAONE_API_FETCH',
+          endpoint: e.data.endpoint,
+          apiKey: e.data.apiKey,
+          payload: e.data.payload
+        }, function (resp) {
+          var lastErr = chrome.runtime.lastError;
+          if (lastErr) {
+            window.postMessage({
+              type: 'STUDY_HOME_EXAONE_RESULT',
+              reqId: reqId,
+              transportOk: false,
+              error: '확장 앱 통신 오류 (' + (lastErr.message || '연결 끊김') + '): 확장 앱을 새로고침한 뒤 이 페이지도 새로고침(F5)해 주세요.'
+            }, window.location.origin);
+            return;
+          }
+          window.postMessage(Object.assign({
+            type: 'STUDY_HOME_EXAONE_RESULT',
+            reqId: reqId
+          }, resp || { transportOk: false, error: '확장 앱으로부터 응답을 받지 못했습니다.' }), window.location.origin);
+        });
+      } catch (err) {
+        window.postMessage({
+          type: 'STUDY_HOME_EXAONE_RESULT',
+          reqId: reqId,
+          transportOk: false,
+          error: '확장 앱이 업데이트되었습니다. 페이지를 새로고침(F5)해 주세요.'
+        }, window.location.origin);
+      }
       return;
     }
     if (e.data.type !== 'STUDY_HOME_EXT_REQUEST_SYNC') return;

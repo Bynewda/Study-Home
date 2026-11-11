@@ -445,6 +445,35 @@ chrome.tabs.onUpdated.addListener(function (tabId, changeInfo, tab) {
 });
 
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
+  if (msg && msg.type === 'EXAONE_API_FETCH') {
+    var targetUrl = (msg.endpoint && String(msg.endpoint).trim()) || 'https://api.exaone.ai/v1/chat/completions';
+    var apiKey = (msg.apiKey && String(msg.apiKey).trim()) || '';
+    fetch(targetUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + apiKey,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(msg.payload || {})
+    })
+      .then(function (res) {
+        return res.text().then(function (bodyText) {
+          sendResponse({
+            transportOk: true,
+            httpOk: res.ok,
+            status: res.status,
+            bodyText: bodyText
+          });
+        });
+      })
+      .catch(function (err) {
+        sendResponse({
+          transportOk: false,
+          error: (err && err.message) ? err.message : String(err)
+        });
+      });
+    return true;
+  }
   if (msg && msg.type === 'RUN_LEARNUS_SYNC') {
     handleSync(false)
       .then(function (r) { sendResponse(r); })

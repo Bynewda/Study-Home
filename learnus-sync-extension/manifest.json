@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "논결(NONGYEOL) · LearnUs 자동 동기화",
-  "version": "1.1.1",
-  "description": "비밀번호 입력 없이 LearnUs 접속 시 및 논결(변리사 2차 수험실) 열람 시 수강 과목·과제 마감·중요 공지를 백그라운드에서 자동 동기화합니다.",
+  "name": "논결(NONGYEOL) · LearnUs 동기화 & EXAONE AI 브리지",
+  "version": "1.2.0",
+  "description": "비밀번호 입력 없이 LearnUs 과제·공지를 자동 동기화하고, K-EXAONE 2.5 미니 어시스턴트의 브라우저 CORS 차단을 우회해 연결합니다.",
   "permissions": [
     "tabs",
     "scripting",
@@ -10,6 +10,8 @@
   ],
   "host_permissions": [
     "https://*.learnus.org/*",
+    "https://api.exaone.ai/*",
+    "https://*.exaone.ai/*",
     "https://study-space-2027.netlify.app/*",
     "https://bynewda.github.io/*",
     "http://localhost/*",

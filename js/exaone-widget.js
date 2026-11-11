@@ -99,6 +99,64 @@
     try { localStorage.setItem(STORAGE_KEY_CHAT, JSON.stringify(state.messages.slice(-MAX_SAVED_MESSAGES))); } catch (e) {}
   }
   function getKey() { try { return (localStorage.getItem(STORAGE_KEY_API) || '').trim(); } catch (e) { return ''; } }
+  function hasExaoneExtBridge() {
+    return !!(document && document.documentElement && document.documentElement.getAttribute('data-study-home-exaone-ext') === '1');
+  }
+  function hasLearnUsExtOnly() {
+    return !!(document && document.documentElement && document.documentElement.getAttribute('data-study-home-lu-ext') === '1' && !hasExaoneExtBridge());
+  }
+  function isLocalServerOrigin() {
+    return typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1') && /^https?:$/i.test(location.protocol);
+  }
+  // 확장 앱(bridge.js -> background.js)을 통한 CORS 우회 호출
+  function fetchViaExtension(endpoint, apiKey, payload, signal) {
+    return new Promise(function (resolve, reject) {
+      if (signal && signal.aborted) {
+        const abortErr = new Error('Aborted');
+        abortErr.name = 'AbortError';
+        reject(abortErr);
+        return;
+      }
+      const reqId = 'exw-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      function cleanup() {
+        window.removeEventListener('message', onMsg);
+        if (signal) signal.removeEventListener('abort', onAbort);
+      }
+      function onAbort() {
+        cleanup();
+        const abortErr = new Error('Aborted');
+        abortErr.name = 'AbortError';
+        reject(abortErr);
+      }
+      function onMsg(e) {
+        if (e.source !== window || !e.data || e.data.type !== 'STUDY_HOME_EXAONE_RESULT' || e.data.reqId !== reqId) return;
+        cleanup();
+        if (!e.data.transportOk) {
+          reject(new Error(e.data.error || '확장 앱 통신 실패'));
+          return;
+        }
+        const bodyText = typeof e.data.bodyText === 'string' ? e.data.bodyText : '';
+        resolve({
+          ok: !!e.data.httpOk,
+          status: Number(e.data.status) || 0,
+          text: function () { return Promise.resolve(bodyText); },
+          json: function () {
+            try { return Promise.resolve(JSON.parse(bodyText)); }
+            catch (err) { return Promise.reject(err); }
+          },
+        });
+      }
+      window.addEventListener('message', onMsg);
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+      window.postMessage({
+        type: 'STUDY_HOME_EXAONE_FETCH',
+        reqId: reqId,
+        endpoint: endpoint,
+        apiKey: apiKey,
+        payload: payload,
+      }, window.location.origin);
+    });
+  }
   function systemPromptFor(mode) {
     const custom = state.systemPrompts[mode];
     return (custom && custom.trim()) ? custom : MODE_PRESETS[mode].systemPrompt;
@@ -196,8 +254,9 @@
   function renderKeyBadge() {
     if (!view) return;
     const ok = getKey().length > 5;
+    const ext = hasExaoneExtBridge();
     view.keyBadge.className = 'exw-key-badge ' + (ok ? 'ok' : 'missing');
-    view.keyBadge.textContent = ok ? 'API 연결 준비됨' : '키 미설정';
+    view.keyBadge.textContent = ok ? (ext ? 'API 연결됨 · 확장앱 활성' : 'API 연결 준비됨') : '키 미설정';
     view.keyBadge.title = ok ? 'API Key 설정 열기' : 'API Key를 입력해 주세요';
   }
 
@@ -220,11 +279,24 @@
       ]);
     }
     if (m.role === 'error') {
+      const errChildren = [
+        h('div', { class: 'exw-err-title' }, [icon('alert', 15), m.meta || '요청 실패 진단']),
+        h('div', { class: 'exw-err-body', text: m.content }),
+      ];
+      if (m.needExtGuide) {
+        errChildren.push(h('div', { class: 'exw-err-actions', style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px' }, [
+          h('button', {
+            type: 'button', class: 'btn btn-sm',
+            onclick: function () { copyText('whale://extensions'); toast('whale://extensions 주소를 복사했습니다. 주소창에 붙여넣어 이동하세요.'); },
+          }, '웨일 확장앱 주소 복사'),
+          h('button', {
+            type: 'button', class: 'btn btn-sm',
+            onclick: function () { copyText('chrome://extensions'); toast('chrome://extensions 주소를 복사했습니다. 주소창에 붙여넣어 이동하세요.'); },
+          }, '크롬 확장앱 주소 복사'),
+        ]));
+      }
       return h('div', { class: 'exw-msg error', role: 'alert' }, [
-        h('div', { class: 'exw-bubble' }, [
-          h('div', { class: 'exw-err-title' }, [icon('alert', 15), m.meta || '요청 실패 진단']),
-          h('div', { class: 'exw-err-body', text: m.content }),
-        ]),
+        h('div', { class: 'exw-bubble' }, errChildren),
       ]);
     }
     const body = h('div', { class: 'exw-md' });
@@ -437,19 +509,37 @@
     renderMessages();
     startTick();
 
+    const targetEndpoint = state.endpoint || DEFAULT_ENDPOINT;
+    const reqPayload = {
+      model: MODEL_NAME,
+      reasoning_effort: effort,
+      max_tokens: effort === 'low' ? 2048 : 4096, // max_tokens에는 내부 추론 토큰도 포함됨
+      temperature: 0.3,
+      messages: [{ role: 'system', content: systemPromptFor(mode) }].concat(recent, [{ role: 'user', content: promptText }]),
+    };
+
     try {
-      const res = await fetch(state.endpoint || DEFAULT_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: MODEL_NAME,
-          reasoning_effort: effort,
-          max_tokens: effort === 'low' ? 2048 : 4096, // max_tokens에는 내부 추론 토큰도 포함됨
-          temperature: 0.3,
-          messages: [{ role: 'system', content: systemPromptFor(mode) }].concat(recent, [{ role: 'user', content: promptText }]),
-        }),
-        signal: controller.signal,
-      });
+      let res;
+      if (hasExaoneExtBridge()) {
+        // 1순위: 웨일/크롬 확장 앱(learnus-sync-extension v1.2.0+) 백그라운드 브리지 경유 (CORS 제한 없음)
+        res = await fetchViaExtension(targetEndpoint, apiKey, reqPayload, controller.signal);
+      } else if (isLocalServerOrigin() && targetEndpoint === DEFAULT_ENDPOINT) {
+        // 2순위: 로컬 서버(server.ps1) 실행 중일 때 /api/exaone 프록시 경유
+        res = await fetch('/api/exaone', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqPayload),
+          signal: controller.signal,
+        });
+      } else {
+        // 3순위: 직접 호출 (프록시 Endpoint 설정 시 또는 확장 앱 미감지 시)
+        res = await fetch(targetEndpoint, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqPayload),
+          signal: controller.signal,
+        });
+      }
       const elapsed = ((performance.now() - state.startedAt) / 1000).toFixed(1);
       if (!res.ok) {
         let detail = 'HTTP ' + res.status;
@@ -469,16 +559,27 @@
     } catch (err) {
       let text = (err && err.message) || '알 수 없는 오류가 발생했습니다.';
       let title = '요청 실패 진단';
+      let needExtGuide = false;
       if (err && err.name === 'AbortError') {
         if (controller.signal.reason === 'timeout') text = '응답 시간이 ' + (REQUEST_TIMEOUT_MS / 1000) + '초를 넘어 요청을 중단했습니다. 추론 깊이를 low로 낮춰 다시 시도해 보세요.';
         else { text = '사용자가 응답 생성을 중지했습니다.'; title = '요청 중지'; }
       } else if (err && err.name === 'TypeError') {
-        text = '네트워크 연결 또는 브라우저 CORS 차단 오류가 발생했습니다.\n'
-          + '1) 인터넷 연결과 API Key 유효 기간을 확인해 주세요.\n'
-          + '2) 바탕화면의 index.html을 더블클릭(file://)해 연 경우 차단될 수 있습니다. 배포된 홈페이지 주소나 "홈페이지 열기.bat"(로컬 서버)로 접속해 주세요.\n'
-          + '3) 계속 실패하면 EXAONE 측에서 브라우저 직접 호출(CORS)을 허용하지 않는 것일 수 있습니다. 이 경우 고급 설정의 Endpoint를 프록시 주소로 바꿔야 합니다.';
+        needExtGuide = true;
+        if (hasLearnUsExtOnly()) {
+          title = '확장 앱 새로고침(업데이트) 필요';
+          text = '확장 앱에 K-EXAONE 2.5 연결 기능(v1.2.0)이 추가되었습니다! 아래 순서로 1회만 새로고침해 주세요.\n'
+            + '1) 아래 버튼으로 확장 앱 관리 주소(whale://extensions 또는 chrome://extensions)를 복사해 주소창에 붙여넣고 이동합니다.\n'
+            + '2) "논결(NONGYEOL) · LearnUs" 확장 앱 카드의 새로고침(↻) 아이콘을 클릭합니다.\n'
+            + '3) 이 홈페이지 탭으로 돌아와 새로고침(F5) 후 다시 실행해 주세요!';
+        } else {
+          title = 'PC 확장 앱(CORS 우회 브리지) 연결 필요';
+          text = '브라우저 CORS 보안 정책으로 인해 직접 호출이 차단되었습니다. 홈페이지 폴더의 확장 앱을 켜면 바로 해결됩니다.\n'
+            + '1) 아래 버튼으로 확장 앱 관리 주소(whale://extensions 또는 chrome://extensions)를 복사해 주소창에 붙여넣고 이동합니다.\n'
+            + '2) 이미 "논결(NONGYEOL)" 확장 앱이 있다면 새로고침(↻) 아이콘을 누르고, 없다면 우측 상단 "개발자 모드" 켜기 → "압축해제된 확장 앱 로드" → 홈페이지 폴더 안의 "learnus-sync-extension" 폴더를 선택합니다.\n'
+            + '3) 이 홈페이지 탭을 새로고침(F5)하면 상단 배지가 "API 연결됨 · 확장앱 활성"으로 바뀌며 즉시 작동합니다!';
+        }
       }
-      state.messages.push({ role: 'error', content: text, meta: title });
+      state.messages.push({ role: 'error', content: text, meta: title, needExtGuide: needExtGuide });
     } finally {
       clearTimeout(timeoutId);
       state.loading = false;
@@ -587,6 +688,11 @@
   }
 
   loadPrefs();
+  window.addEventListener('message', function (e) {
+    if (e.source === window && e.data && e.data.type === 'STUDY_HOME_EXT_READY') {
+      renderKeyBadge();
+    }
+  });
   window.ExaoneWidget = {
     mount: mount,
     setDraft: setDraft,
