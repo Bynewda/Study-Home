@@ -65,6 +65,7 @@
     contextLabel: '',       // 홈페이지 다른 화면에서 'AI에 묻기'로 넘어온 학습 맥락 이름
     messages: [],           // { role: 'user'|'assistant'|'error', content, meta }
     loading: false,
+    loadingText: '',
     startedAt: 0,
     settingsOpen: false,
     abort: null,
@@ -283,8 +284,30 @@
         h('div', { class: 'exw-err-title' }, [icon('alert', 15), m.meta || '요청 실패 진단']),
         h('div', { class: 'exw-err-body', text: m.content }),
       ];
+      const actionBtns = [];
+      if (!m.retryPrompt) {
+        const mIdx = state.messages.indexOf(m);
+        for (let pi = (mIdx >= 0 ? mIdx - 1 : state.messages.length - 1); pi >= 0; pi--) {
+          if (state.messages[pi] && state.messages[pi].role === 'user' && state.messages[pi].content) {
+            m.retryPrompt = state.messages[pi].content;
+            break;
+          }
+        }
+      }
+      if (m.retryPrompt) {
+        actionBtns.push(h('button', {
+          type: 'button', class: 'btn btn-primary btn-sm',
+          onclick: function () { retryFromError(m, m.retryEffort || state.effort); },
+        }, '다시 시도'));
+        if ((m.retryEffort || state.effort) !== 'low') {
+          actionBtns.push(h('button', {
+            type: 'button', class: 'btn btn-sm',
+            onclick: function () { retryFromError(m, 'low'); },
+          }, '빠른 추론(low)으로 다시 시도'));
+        }
+      }
       if (m.needExtGuide) {
-        errChildren.push(h('div', { class: 'exw-err-actions', style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px' }, [
+        actionBtns.push(
           h('button', {
             type: 'button', class: 'btn btn-sm',
             onclick: function () { copyText('whale://extensions'); toast('whale://extensions 주소를 복사했습니다. 주소창에 붙여넣어 이동하세요.'); },
@@ -292,8 +315,11 @@
           h('button', {
             type: 'button', class: 'btn btn-sm',
             onclick: function () { copyText('chrome://extensions'); toast('chrome://extensions 주소를 복사했습니다. 주소창에 붙여넣어 이동하세요.'); },
-          }, '크롬 확장앱 주소 복사'),
-        ]));
+          }, '크롬 확장앱 주소 복사')
+        );
+      }
+      if (actionBtns.length > 0) {
+        errChildren.push(h('div', { class: 'exw-err-actions', style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px' }, actionBtns));
       }
       return h('div', { class: 'exw-msg error', role: 'alert' }, [
         h('div', { class: 'exw-bubble' }, errChildren),
@@ -341,9 +367,10 @@
     }
     if (state.loading) {
       view.elapsed = h('span', { class: 'exw-elapsed', text: '0.0s' });
+      view.statusLabel = h('span', { text: state.loadingText || 'K-EXAONE 2.5 추론 중…' });
       list.appendChild(h('div', { class: 'exw-loading', 'aria-live': 'polite' }, [
         h('span', { class: 'exw-spinner', 'aria-hidden': 'true' }),
-        h('span', { text: 'K-EXAONE 2.5 추론 중…' }),
+        view.statusLabel,
         view.elapsed,
       ]));
     }
@@ -475,11 +502,65 @@
   }
   function stopTick() { if (tickTimer) { clearInterval(tickTimer); tickTimer = null; } }
 
-  async function send() {
+  function setLoadingStatus(txt) {
+    state.loadingText = txt || 'K-EXAONE 2.5 추론 중…';
+    if (view && view.statusLabel) view.statusLabel.textContent = state.loadingText;
+  }
+
+  function waitWithCountdown(delayMs, attemptIdx, maxRetries, signal) {
+    return new Promise(function (resolve, reject) {
+      if (signal && signal.aborted) {
+        const abortErr = new Error('Aborted');
+        abortErr.name = 'AbortError';
+        reject(abortErr);
+        return;
+      }
+      let remainingSec = Math.max(1, Math.ceil(delayMs / 1000));
+      setLoadingStatus('서버 혼잡(1024) · ' + remainingSec + '초 후 자동 재시도 대기 중… (' + attemptIdx + '/' + maxRetries + '회)');
+      const countInterval = setInterval(function () {
+        remainingSec = Math.max(1, remainingSec - 1);
+        setLoadingStatus('서버 혼잡(1024) · ' + remainingSec + '초 후 자동 재시도 대기 중… (' + attemptIdx + '/' + maxRetries + '회)');
+      }, 1000);
+      const timer = setTimeout(function () {
+        clearInterval(countInterval);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, delayMs);
+      function onAbort() {
+        clearInterval(countInterval);
+        clearTimeout(timer);
+        const abortErr = new Error('Aborted');
+        abortErr.name = 'AbortError';
+        reject(abortErr);
+      }
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  function retryFromError(errMsgObj, targetEffort) {
+    if (state.loading || !errMsgObj || !errMsgObj.retryPrompt) return;
+    const idx = state.messages.indexOf(errMsgObj);
+    if (idx !== -1) state.messages.splice(idx, 1);
+    if (targetEffort && targetEffort !== state.effort) {
+      state.effort = targetEffort;
+      if (view && view.effortSel) view.effortSel.value = targetEffort;
+      savePrefs();
+    }
+    saveChat();
+    send({
+      promptText: errMsgObj.retryPrompt,
+      mode: errMsgObj.retryMode || state.mode,
+      effort: targetEffort || errMsgObj.retryEffort || state.effort,
+      skipUserBubble: true,
+    });
+  }
+
+  async function send(retryOpts) {
+    const isRetryCall = !!(retryOpts && typeof retryOpts === 'object' && retryOpts.promptText);
     if (state.loading) { if (state.abort) state.abort.abort(); return; }
-    if (!view) return;
-    const promptText = view.input.value.trim();
-    if (!promptText) { view.input.focus(); return; }
+    if (!view && !isRetryCall) return;
+    const promptText = isRetryCall ? retryOpts.promptText : (view ? view.input.value.trim() : '');
+    if (!promptText) { if (view) view.input.focus(); return; }
     const apiKey = getKey();
     if (!apiKey) {
       openSettings(true);
@@ -487,21 +568,35 @@
       return;
     }
 
-    const mode = state.mode;
-    const effort = state.effort;
+    const mode = (isRetryCall && retryOpts.mode) ? retryOpts.mode : state.mode;
+    const effort = (isRetryCall && retryOpts.effort) ? retryOpts.effort : state.effort;
     // 직전 대화 최대 4개까지 문맥으로 포함 (오류 메시지는 제외)
-    const recent = state.messages.filter(function (m) { return m.role === 'user' || m.role === 'assistant'; })
+    const recentPool = isRetryCall ? state.messages.slice(0, -1) : state.messages;
+    const recent = recentPool.filter(function (m) { return m.role === 'user' || m.role === 'assistant'; })
       .slice(-4).map(function (m) { return { role: m.role, content: m.content }; });
 
-    state.messages.push({ role: 'user', content: promptText, meta: MODE_PRESETS[mode].label + ' · effort: ' + effort });
-    state.draft = '';
-    state.contextLabel = '';
-    view.input.value = '';
-    updateCounter();
-    renderContextChip();
+    if (!isRetryCall || !retryOpts.skipUserBubble) {
+      state.messages.push({ role: 'user', content: promptText, meta: MODE_PRESETS[mode].label + ' · effort: ' + effort });
+      state.draft = '';
+      state.contextLabel = '';
+      if (view) {
+        view.input.value = '';
+        updateCounter();
+        renderContextChip();
+      }
+    } else {
+      // 마지막 user 버블의 메타를 재시도된 effort에 맞춰 갱신
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        if (state.messages[i].role === 'user') {
+          state.messages[i].meta = MODE_PRESETS[mode].label + ' · effort: ' + effort;
+          break;
+        }
+      }
+    }
     saveChat();
 
     state.loading = true;
+    state.loadingText = 'K-EXAONE 2.5 추론 중…';
     state.startedAt = performance.now();
     const controller = new AbortController();
     state.abort = controller;
@@ -518,39 +613,65 @@
       messages: [{ role: 'system', content: systemPromptFor(mode) }].concat(recent, [{ role: 'user', content: promptText }]),
     };
 
+    const RETRY_DELAYS_MS = [2500, 4000, 6000, 8000]; // 최대 4회 자동 재시도 (총 5회 호출)
+    const maxRetries = RETRY_DELAYS_MS.length;
+
     try {
       let res;
-      if (hasExaoneExtBridge()) {
-        // 1순위: 웨일/크롬 확장 앱(learnus-sync-extension v1.2.0+) 백그라운드 브리지 경유 (CORS 제한 없음)
-        res = await fetchViaExtension(targetEndpoint, apiKey, reqPayload, controller.signal);
-      } else if (isLocalServerOrigin() && targetEndpoint === DEFAULT_ENDPOINT) {
-        // 2순위: 로컬 서버(server.ps1) 실행 중일 때 /api/exaone 프록시 경유
-        res = await fetch('/api/exaone', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify(reqPayload),
-          signal: controller.signal,
-        });
-      } else {
-        // 3순위: 직접 호출 (프록시 Endpoint 설정 시 또는 확장 앱 미감지 시)
-        res = await fetch(targetEndpoint, {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify(reqPayload),
-          signal: controller.signal,
-        });
+      let lastRaw = '';
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        if (attempt > 0) {
+          setLoadingStatus('K-EXAONE 2.5 자동 재시도 중… (' + attempt + '/' + maxRetries + '회)');
+        }
+        if (hasExaoneExtBridge()) {
+          // 1순위: 웨일/크롬 확장 앱(learnus-sync-extension v1.2.0+) 백그라운드 브리지 경유 (CORS 제한 없음)
+          res = await fetchViaExtension(targetEndpoint, apiKey, reqPayload, controller.signal);
+        } else if (isLocalServerOrigin() && targetEndpoint === DEFAULT_ENDPOINT) {
+          // 2순위: 로컬 서버(server.ps1) 실행 중일 때 /api/exaone 프록시 경유
+          res = await fetch('/api/exaone', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify(reqPayload),
+            signal: controller.signal,
+          });
+        } else {
+          // 3순위: 직접 호출 (프록시 Endpoint 설정 시 또는 확장 앱 미감지 시)
+          res = await fetch(targetEndpoint, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+            body: JSON.stringify(reqPayload),
+            signal: controller.signal,
+          });
+        }
+        if (res.ok) break;
+
+        lastRaw = await res.text().catch(function () { return ''; });
+        const isBusyOrTemp = (res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504);
+        if (isBusyOrTemp && attempt < maxRetries) {
+          await waitWithCountdown(RETRY_DELAYS_MS[attempt], attempt + 1, maxRetries, controller.signal);
+          continue;
+        }
+        break;
       }
+
       const elapsed = ((performance.now() - state.startedAt) / 1000).toFixed(1);
       if (!res.ok) {
         let detail = 'HTTP ' + res.status;
-        const raw = await res.text().catch(function () { return ''; });
+        const raw = lastRaw;
         try { const j = JSON.parse(raw); detail = (j.error && (j.error.message || j.error)) || j.message || raw; }
         catch (_) { if (raw) detail = raw.slice(0, 240); }
+        const detailStr = typeof detail === 'string' ? detail : JSON.stringify(detail);
         let hint = '';
         if (res.status === 401 || res.status === 403) hint = '\n→ API Key가 올바른지, 만료되지 않았는지 확인해 주세요.';
-        else if (res.status === 429) hint = '\n→ 무료 호출 한도(분당/일일)를 초과했습니다. 잠시 후 다시 시도해 주세요.';
-        else if (res.status >= 500) hint = '\n→ EXAONE 서버 측 일시 오류입니다. 잠시 후 다시 시도해 주세요.';
-        throw new Error('API 응답 오류 (' + res.status + '): ' + (typeof detail === 'string' ? detail : JSON.stringify(detail)) + hint);
+        else if (res.status === 429) {
+          if (/concurrent|busy/i.test(detailStr)) {
+            hint = '\n→ 현재 EXAONE 서버에 동시 접속자가 몰려 ' + maxRetries + '회 자동 재시도했으나 대기열이 가득 차 있습니다. 아래 [다시 시도] 또는 [빠른 추론(low)으로 다시 시도] 버튼을 눌러 주세요.';
+          } else {
+            hint = '\n→ 무료 호출 한도(분당/일일)를 초과했거나 서버가 혼잡합니다. 아래 [다시 시도] 버튼을 눌러 주세요.';
+          }
+        }
+        else if (res.status >= 500) hint = '\n→ EXAONE 서버 측 일시 오류입니다. 아래 [다시 시도] 버튼을 눌러 주세요.';
+        throw new Error('API 응답 오류 (' + res.status + '): ' + detailStr + hint);
       }
       const data = await res.json();
       const msg = data && data.choices && data.choices[0] && data.choices[0].message;
@@ -561,7 +682,7 @@
       let title = '요청 실패 진단';
       let needExtGuide = false;
       if (err && err.name === 'AbortError') {
-        if (controller.signal.reason === 'timeout') text = '응답 시간이 ' + (REQUEST_TIMEOUT_MS / 1000) + '초를 넘어 요청을 중단했습니다. 추론 깊이를 low로 낮춰 다시 시도해 보세요.';
+        if (controller.signal.reason === 'timeout') text = '응답 시간이 ' + (REQUEST_TIMEOUT_MS / 1000) + '초를 넘어 요청을 중단했습니다. 아래 [빠른 추론(low)으로 다시 시도]를 눌러 보세요.';
         else { text = '사용자가 응답 생성을 중지했습니다.'; title = '요청 중지'; }
       } else if (err && err.name === 'TypeError') {
         needExtGuide = true;
@@ -579,10 +700,19 @@
             + '3) 이 홈페이지 탭을 새로고침(F5)하면 상단 배지가 "API 연결됨 · 확장앱 활성"으로 바뀌며 즉시 작동합니다!';
         }
       }
-      state.messages.push({ role: 'error', content: text, meta: title, needExtGuide: needExtGuide });
+      state.messages.push({
+        role: 'error',
+        content: text,
+        meta: title,
+        needExtGuide: needExtGuide,
+        retryPrompt: promptText,
+        retryMode: mode,
+        retryEffort: effort,
+      });
     } finally {
       clearTimeout(timeoutId);
       state.loading = false;
+      state.loadingText = '';
       state.abort = null;
       stopTick();
       saveChat();
