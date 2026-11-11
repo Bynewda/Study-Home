@@ -7311,14 +7311,18 @@
     uiCard.append(gridEl);
     root.append(uiCard);
 
-    // AI는 각 서비스의 웹페이지에서 사용한다.
+    // K-EXAONE 2.5 미니 어시스턴트 및 외부 AI 웹페이지 바로가기
     const aiCfgCard = el('div', { class: 'card' });
     aiCfgCard.append(
       el('div', { class: 'section-head' }, [
-        el('h2', { style: 'font-family:var(--font-serif);margin:0' }, 'AI 웹페이지 바로가기'),
+        el('h2', { style: 'font-family:var(--font-serif);margin:0' }, 'K-EXAONE 2.5 어시스턴트 & AI 도구'),
         el('button', { class: 'section-link', onclick: function () { ctx.navigate('ai'); } }, 'AI 도구 전체 화면 열기 →'),
       ]),
-      el('p', { class: 'hint' }, 'ChatGPT·Claude·Gemini 등 사용할 AI를 선택하면 공식 웹페이지가 새 탭에서 열립니다.'),
+      el('p', { class: 'hint' }, '우측 하단 AI 버튼(또는 상단 AI 도구)을 눌러 K-EXAONE 2.5 미니 위젯에서 판례 3단 요약·즉문즉답·답안 문장 교정을 바로 실행하거나, ChatGPT·Claude·Gemini 공식 웹페이지를 새 탭으로 열 수 있습니다.'),
+      el('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap;margin-top:10px' }, [
+        el('button', { type: 'button', class: 'btn btn-primary btn-sm', onclick: function () { setAiPanelTab('exaone'); AiStore.setWidgetOpen(true); renderAiWidget({ focus: true }); } }, 'K-EXAONE 2.5 미니 위젯 열기'),
+        el('button', { type: 'button', class: 'btn btn-sm', onclick: function () { ctx.navigate('ai'); } }, '전체 화면으로 열기'),
+      ]),
     );
     root.append(aiCfgCard);
 
@@ -7418,6 +7422,28 @@
   let _aiWebPrompt = '';
   let _aiWebContextLabel = '';
 
+  // AI 패널 탭: 'exaone'(K-EXAONE 2.5 미니 어시스턴트, js/exaone-widget.js) | 'web'(웹 AI 바로가기)
+  const AI_TAB_KEY = 'nongyeol-ai-tab';
+  function hasExaoneWidget() { return !!(window.ExaoneWidget && typeof window.ExaoneWidget.mount === 'function'); }
+  function aiPanelTab() {
+    let t = 'exaone';
+    try { t = localStorage.getItem(AI_TAB_KEY) || 'exaone'; } catch (e) {}
+    if (t === 'exaone' && !hasExaoneWidget()) return 'web';
+    return t === 'web' ? 'web' : 'exaone';
+  }
+  function setAiPanelTab(t) { try { localStorage.setItem(AI_TAB_KEY, t); } catch (e) {} }
+  function buildAiTabbar(active, onChange) {
+    if (!hasExaoneWidget()) return null;
+    const bar = el('div', { class: 'ai-tabbar', role: 'tablist', 'aria-label': 'AI 도구 전환' });
+    [['exaone', 'EXAONE 어시스턴트'], ['web', '웹 AI 바로가기']].forEach(function (p) {
+      bar.append(el('button', {
+        type: 'button', role: 'tab', 'aria-selected': active === p[0] ? 'true' : 'false',
+        onclick: function () { if (active !== p[0]) { setAiPanelTab(p[0]); onChange(p[0]); } },
+      }, p[1]));
+    });
+    return bar;
+  }
+
   function openContextualAi(opts) {
     opts = opts || {};
     _aiWebContextLabel = opts.label || '선택한 학습 내용';
@@ -7425,6 +7451,8 @@
       opts.contextText ? '[참고 학습 내용 — ' + _aiWebContextLabel + ']\n' + opts.contextText : '',
       opts.promptDraft || '',
     ].filter(Boolean).join('\n\n');
+    // EXAONE 어시스턴트 입력창에도 같은 학습 맥락을 채워 바로 질문할 수 있게 함
+    if (hasExaoneWidget()) window.ExaoneWidget.setDraft(_aiWebPrompt, _aiWebContextLabel);
     if (current === 'ai') { refresh(); return; }
     AiStore.setWidgetOpen(true);
     renderAiWidget({ focus: true });
@@ -7476,13 +7504,24 @@
   }
 
   function renderAiTools(root, ctx) {
+    const tab = aiPanelTab();
     root.append(el('header', { class: 'page-hero' }, [
       el('div', {}, [
-        el('div', { class: 'page-eyebrow' }, 'AI WEB SHORTCUTS'),
+        el('div', { class: 'page-eyebrow' }, tab === 'exaone' ? 'K-EXAONE 2.5 ASSISTANT' : 'AI WEB SHORTCUTS'),
         el('h1', { class: 'page-title' }, 'AI 도구'),
-        el('p', { class: 'page-subtitle' }, '사용할 AI를 선택하면 공식 웹페이지가 새 탭에서 열립니다.'),
+        el('p', { class: 'page-subtitle' }, tab === 'exaone'
+          ? '판례·노트 요약, 개념 즉문즉답, 답안 문장 교정을 이 화면에서 바로 요청합니다.'
+          : '사용할 AI를 선택하면 공식 웹페이지가 새 탭에서 열립니다.'),
       ]),
     ]));
+    const tabbar = buildAiTabbar(tab, function () { ctx.refresh(); });
+    if (tabbar) { tabbar.style.cssText = 'border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;max-width:420px'; root.append(tabbar); }
+    if (tab === 'exaone') {
+      const host = el('div', { class: 'exw-page-host' });
+      root.append(host);
+      window.ExaoneWidget.mount(host);
+      return;
+    }
     root.append(buildAiWebLinks(false));
     const prompt = buildAiWebPrompt(false);
     if (prompt) root.append(prompt);
@@ -7511,7 +7550,11 @@
       }, [svgIcon('ai', 20)]));
       return;
     }
-    const panel = el('section', { class: 'ai-mini ai-web-mini', 'aria-label': 'AI 웹페이지 바로가기' });
+    const tab = aiPanelTab();
+    const panel = el('section', {
+      class: 'ai-mini ' + (tab === 'exaone' ? 'exw-host' : 'ai-web-mini'),
+      'aria-label': tab === 'exaone' ? 'K-EXAONE 2.5 미니 어시스턴트' : 'AI 웹페이지 바로가기',
+    });
     panel.append(el('div', { class: 'ai-mini-head' }, [
       el('div', { class: 'ai-mini-title' }, [svgIcon('ai'), 'AI 도우미']),
       el('div', { class: 'ai-mini-actions' }, [
@@ -7528,6 +7571,16 @@
         }, [svgIcon('close', 16)]),
       ]),
     ]));
+    const tabbar = buildAiTabbar(tab, function () { renderAiWidget({ focus: true }); });
+    if (tabbar) panel.append(tabbar);
+    if (tab === 'exaone') {
+      const host = el('div', { class: 'exw-panel-host', style: 'flex:1;min-height:0;display:flex;flex-direction:column' });
+      panel.append(host);
+      root.append(panel);
+      window.ExaoneWidget.mount(host);
+      if (opts.focus) window.ExaoneWidget.focus();
+      return;
+    }
     const body = el('div', { class: 'ai-mini-body' }, [
       el('p', { class: 'hint', style: 'margin:0 0 12px' }, '사용할 AI를 선택하세요. 새 탭에서 열립니다.'),
       buildAiWebLinks(true),

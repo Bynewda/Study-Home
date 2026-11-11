@@ -1,0 +1,280 @@
+/* =========================================================================
+   K-EXAONE 2.5 미니 AI 어시스턴트 위젯 — 논결 서재 디자인 토큰 적용
+   (기본 종이 아이보리 · 웜 페이퍼 · 야간 집중 테마를 자동으로 따릅니다)
+   ========================================================================= */
+.exw-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font);
+}
+.exw-root [hidden] { display: none !important; }
+.exw-ico { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.exw-ico svg { display: block; }
+
+/* 헤더 */
+.exw-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.exw-brand { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+.exw-logo {
+  width: 30px; height: 30px; border-radius: 8px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--on-accent);
+  font-weight: 800; font-size: .74rem; letter-spacing: .02em;
+}
+.exw-brand-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.exw-brand-text strong { font-size: .9rem; color: var(--text); }
+.exw-brand-text span { font-size: .74rem; color: var(--text-sub); white-space: nowrap; }
+.exw-key-badge {
+  font-family: var(--font); font-size: .74rem; font-weight: 700;
+  padding: 3px 9px; border-radius: 999px; cursor: pointer;
+  border: 1px solid transparent; line-height: 1.4;
+}
+.exw-key-badge::before {
+  content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  margin-right: 5px; vertical-align: 1px; background: currentColor;
+}
+.exw-key-badge.ok { background: var(--exam-bg); color: var(--exam-fg); border-color: color-mix(in srgb, var(--exam-fg) 25%, transparent); }
+.exw-key-badge.missing { background: var(--warn-bg); color: var(--warn-fg); border-color: color-mix(in srgb, var(--warn-fg) 25%, transparent); }
+.exw-head-actions { display: flex; gap: 2px; flex: none; }
+
+/* 설정 패널 */
+.exw-settings {
+  padding: 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 8px;
+  flex: none;
+  max-height: 46%;
+  overflow-y: auto;
+}
+.exw-settings-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.exw-settings-head strong { display: inline-flex; align-items: center; gap: 5px; font-size: .86rem; }
+.exw-settings-head a { font-size: .78rem; font-weight: 600; }
+.exw-help { margin: 0; font-size: .78rem; color: var(--text-sub); line-height: 1.5; }
+.exw-key-row { display: flex; gap: 4px; align-items: center; }
+.exw-key-row .exw-input { flex: 1; min-width: 0; }
+.exw-key-row .btn { flex: none; }
+.exw-input {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: .84rem;
+  border-radius: 8px;
+}
+textarea.exw-input { resize: vertical; line-height: 1.5; }
+.exw-input.mono { font-family: ui-monospace, 'D2Coding', Consolas, monospace; font-size: .78rem; }
+.exw-label { font-size: .76rem; color: var(--text-sub); margin: 8px 0 3px; font-weight: 600; }
+.exw-adv summary { cursor: pointer; font-size: .78rem; color: var(--text-sub); font-weight: 600; }
+
+/* 모드 탭 + 추론 깊이 */
+.exw-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: none; flex-wrap: wrap;
+}
+.exw-modes { display: flex; gap: 2px; padding: 2px; background: var(--surface-soft); border-radius: 9px; }
+.exw-modes button {
+  border: none; background: transparent; cursor: pointer;
+  font-family: var(--font); font-size: .78rem; font-weight: 600;
+  color: var(--text-sub);
+  padding: 5px 9px; border-radius: 7px; min-height: 30px; white-space: nowrap;
+}
+.exw-modes button[aria-selected="true"] { background: var(--surface-pure); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+select.exw-effort {
+  width: auto; min-height: 30px; height: 30px;
+  padding: 2px 8px; font-size: .76rem; border-radius: 7px;
+}
+
+/* 대화 목록 */
+.exw-list {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+.exw-msg { display: flex; flex-direction: column; max-width: 100%; }
+.exw-msg.user { align-items: flex-end; }
+.exw-msg.user .exw-bubble {
+  max-width: 88%;
+  background: var(--accent); color: var(--on-accent);
+  border-radius: 14px 14px 4px 14px;
+  padding: 9px 12px;
+  white-space: pre-wrap; word-break: break-word;
+  font-size: .86rem; line-height: 1.55;
+}
+.exw-msg.assistant .exw-bubble {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 14px 14px 14px 4px;
+  padding: 10px 12px;
+  font-size: .86rem; line-height: 1.65;
+}
+.exw-msg.error .exw-bubble {
+  background: var(--danger-bg); color: var(--danger-fg);
+  border: 1px solid color-mix(in srgb, var(--danger-fg) 25%, transparent);
+  border-radius: 12px; padding: 10px 12px; font-size: .8rem;
+}
+.exw-err-title { display: flex; align-items: center; gap: 5px; font-weight: 700; margin-bottom: 4px; }
+.exw-err-body { white-space: pre-wrap; line-height: 1.55; }
+.exw-meta { font-size: .72rem; color: var(--text-sub); margin-top: 3px; padding: 0 2px; }
+.exw-bubble-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border);
+}
+.exw-bubble-foot .exw-meta { margin: 0; }
+.exw-mini-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid transparent; background: transparent; cursor: pointer;
+  font-family: var(--font); font-size: .76rem; font-weight: 600; color: var(--text-sub);
+  padding: 4px 7px; border-radius: 6px; min-height: 28px;
+}
+.exw-mini-btn:hover { background: var(--surface-soft); color: var(--text); border-color: var(--border); }
+
+/* 응답 마크다운 */
+.exw-md { word-break: break-word; }
+.exw-md p { margin: 0 0 6px; }
+.exw-md p:last-child { margin-bottom: 0; }
+.exw-md ul { margin: 4px 0; padding-left: 18px; }
+.exw-md li { margin-bottom: 3px; }
+.exw-md h4, .exw-md h5 { margin: 8px 0 4px; font-size: .9rem; color: var(--text); font-family: var(--font); }
+.exw-md strong { color: var(--accent); }
+.exw-md code { background: var(--exam-bg); color: var(--exam-fg); padding: 1px 5px; border-radius: 4px; font-size: .8rem; }
+.exw-md pre {
+  background: var(--surface-soft); border: 1px solid var(--border);
+  padding: 8px 10px; border-radius: 8px; overflow-x: auto; margin: 6px 0;
+}
+.exw-md pre code { background: none; color: var(--text); padding: 0; }
+
+/* 시작 안내 */
+.exw-welcome {
+  margin: auto 0;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: 6px; padding: 8px 4px;
+}
+.exw-welcome-mark {
+  width: 42px; height: 42px; border-radius: 12px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--exam-bg); color: var(--exam-fg); font-weight: 800; font-size: .86rem;
+  margin-bottom: 2px;
+}
+.exw-welcome-title { font-size: .92rem; font-family: var(--font-serif); }
+.exw-welcome-desc { margin: 0 0 6px; font-size: .8rem; color: var(--text-sub); line-height: 1.55; max-width: 290px; }
+.exw-quick { display: grid; gap: 6px; width: 100%; max-width: 300px; }
+.exw-quick-btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  min-height: 40px; padding: 8px 12px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font); font-size: .8rem; font-weight: 600; text-align: left; cursor: pointer;
+}
+.exw-quick-btn:hover { border-color: var(--accent); background: var(--exam-bg); }
+.exw-quick-arrow { color: var(--text-sub); }
+.exw-setup-link {
+  margin-top: 6px;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; background: none; cursor: pointer;
+  color: var(--warn-fg); font-family: var(--font); font-size: .8rem; font-weight: 700;
+  text-decoration: underline; text-underline-offset: 3px;
+}
+
+/* 로딩 */
+.exw-loading {
+  display: inline-flex; align-items: center; gap: 8px; align-self: flex-start;
+  padding: 8px 12px; border-radius: 12px;
+  background: var(--bg); border: 1px solid var(--border);
+  font-size: .8rem; color: var(--text-sub);
+}
+.exw-spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: exw-spin .8s linear infinite;
+}
+@keyframes exw-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .exw-spinner { animation-duration: 2.4s; } }
+.exw-elapsed { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent); }
+
+/* 토스트 */
+.exw-toast {
+  flex: none; padding: 6px 12px; text-align: center;
+  background: var(--accent); color: var(--on-accent);
+  font-size: .78rem; font-weight: 600;
+}
+
+/* 입력부 */
+.exw-foot { flex: none; padding: 8px 10px 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px; }
+.exw-ctx {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  padding: 4px 4px 4px 10px; border-radius: 8px;
+  background: var(--exam-bg); color: var(--exam-fg); font-size: .76rem; font-weight: 600;
+}
+.exw-ctx span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.exw-compose {
+  border: 1px solid var(--border-strong); border-radius: 10px;
+  background: var(--surface-pure);
+  transition: border-color .14s, box-shadow .14s;
+}
+.exw-compose:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent); }
+.exw-textarea {
+  display: block; width: 100%;
+  min-height: 64px; max-height: 160px;
+  border: none !important; box-shadow: none !important; outline: none;
+  background: transparent;
+  padding: 9px 11px 4px;
+  font-size: .88rem; line-height: 1.5; resize: vertical;
+}
+.exw-compose-bar { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 6px 6px 10px; }
+.exw-compose-info { display: flex; align-items: center; gap: 6px; font-size: .74rem; color: var(--text-sub); }
+.exw-enter { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-size: .74rem; font-weight: 500; color: var(--text-sub); cursor: pointer; }
+.exw-enter input { width: 14px; min-height: 14px; height: 14px; margin: 0; }
+.exw-send { gap: 5px; min-height: 34px; }
+.exw-send.stop { color: var(--danger-fg); border-color: color-mix(in srgb, var(--danger-fg) 40%, var(--border)); }
+
+/* AI 패널 안의 탭 전환 (EXAONE 어시스턴트 / 웹 AI 바로가기) */
+.ai-tabbar {
+  display: flex; gap: 4px; padding: 6px 10px;
+  border-bottom: 1px solid var(--border); background: var(--bg); flex: none;
+}
+.ai-tabbar button {
+  flex: 1; min-height: 32px; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text-sub);
+  font-family: var(--font); font-size: .8rem; font-weight: 700; cursor: pointer;
+}
+.ai-tabbar button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.ai-mini.exw-host { width: 392px; height: 600px; max-height: calc(100vh - 44px); }
+@media (min-width: 1200px) {
+  .app.ai-docked { grid-template-columns: 248px minmax(0, 1fr) 388px; }
+  .app.ai-docked .ai-mini.exw-host { width: 100%; height: 100vh; max-height: 100vh; }
+}
+.ai-mini.exw-host .exw-root { flex: 1; min-height: 0; }
+/* 작은 패널에서는 위젯 헤더를 한 줄로 압축 (패널 상단 'AI 도우미' 헤더와 중복 최소화) */
+.ai-mini.exw-host .exw-head { padding: 6px 10px; }
+.ai-mini.exw-host .exw-logo { width: 24px; height: 24px; font-size: .66rem; border-radius: 6px; }
+.ai-mini.exw-host .exw-brand-text span { display: none; }
+.exw-page-host {
+  height: min(720px, calc(100vh - 220px));
+  min-height: 460px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 767px) {
+  .ai-mini.exw-host { width: calc(100vw - 24px); height: min(76vh, 600px); }
+  .exw-modes button { padding: 5px 7px; font-size: .76rem; min-height: 36px; }
+  .exw-mini-btn { min-height: 36px; }
+  .exw-textarea { font-size: 16px; } /* iOS 입력 시 자동 확대 방지 */
+  .exw-page-host { height: calc(100vh - 200px); }
+}

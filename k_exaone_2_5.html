@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>K-EXAONE 2.5 AI 미니 위젯</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Pretendard Font -->
+  <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Pretendard', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'Roboto', 'sans-serif'],
+            mono: ['JetBrains Mono', 'D2Coding', 'monospace']
+          },
+          colors: {
+            exaone: {
+              50: '#fff1f3',
+              100: '#ffe4e8',
+              500: '#e11d48',
+              600: '#be123c',
+              700: '#9f1239'
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    /* 커스텀 스크롤바 및 마크다운 스타일 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(156, 163, 175, 0.35);
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(156, 163, 175, 0.55);
+    }
+    .md-content pre {
+      background-color: #111827;
+      color: #f3f4f6;
+      padding: 0.75rem;
+      border-radius: 0.5rem;
+      overflow-x: auto;
+      font-size: 0.8125rem;
+      margin: 0.5rem 0;
+      border: 1px solid rgba(75, 85, 99, 0.4);
+    }
+    .md-content code:not(pre code) {
+      background-color: rgba(225, 29, 72, 0.12);
+      color: #fb7185;
+      padding: 0.125rem 0.35rem;
+      border-radius: 0.25rem;
+      font-size: 0.8125rem;
+    }
+    html:not(.dark) .md-content code:not(pre code) {
+      background-color: rgba(225, 29, 72, 0.08);
+      color: #be123c;
+    }
+    .md-content ul {
+      list-style-type: disc;
+      padding-left: 1.25rem;
+      margin: 0.35rem 0;
+    }
+    .md-content ol {
+      list-style-type: decimal;
+      padding-left: 1.25rem;
+      margin: 0.35rem 0;
+    }
+    .md-content li {
+      margin-bottom: 0.25rem;
+    }
+    .md-content p {
+      margin-bottom: 0.5rem;
+    }
+    .md-content p:last-child {
+      margin-bottom: 0;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100 min-h-screen flex items-center justify-center p-3 sm:p-6 transition-colors duration-200">
+
+  <!-- 대시보드 임베드용 메인 위젯 컨테이너 (#exaone-widget-root 부분만 복사해 다른 대시보드에 넣을 수 있습니다) -->
+  <div id="exaone-widget-root" class="w-full max-w-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl shadow-xl overflow-hidden flex flex-col h-[680px] max-h-[92vh] transition-all">
+
+    <!-- 1. 상단 헤더 영역 -->
+    <header class="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/60 dark:bg-slate-900/90 backdrop-blur-sm shrink-0">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-amber-500 flex items-center justify-center text-white font-bold text-sm shadow-sm">
+          EX
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="font-bold text-sm tracking-tight text-slate-900 dark:text-white">K-EXAONE 2.5</h1>
+            <span id="key-status-badge" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300/50 dark:border-amber-800/60 cursor-pointer" onclick="toggleSettingsPanel()">
+              <span id="key-status-dot" class="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+              <span id="key-status-text">키 미설정</span>
+            </span>
+          </div>
+          <p class="text-[11px] text-slate-500 dark:text-slate-400">LG AI Research · 대시보드 학습·요약 어시스턴트</p>
+        </div>
+      </div>
+
+      <!-- 우측 컨트롤 아이콘 -->
+      <div class="flex items-center gap-1">
+        <!-- 샘플 입력 테스트 버튼 -->
+        <button type="button" onclick="insertSamplePrompt()" title="샘플 텍스트 채우기" class="p-2 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition">
+          예시
+        </button>
+        <!-- 대화 초기화 버튼 -->
+        <button type="button" onclick="clearHistory()" title="대화 기록 비우기" class="p-2 rounded-lg text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
+        <!-- 다크/라이트 테마 토글 -->
+        <button type="button" onclick="toggleTheme()" title="테마 전환" class="p-2 rounded-lg text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition">
+          <svg id="theme-icon-sun" class="w-4 h-4 hidden dark:block" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+          <svg id="theme-icon-moon" class="w-4 h-4 block dark:hidden" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+          </svg>
+        </button>
+        <!-- API 키 및 프록시 설정 토글 -->
+        <button type="button" id="settings-btn" onclick="toggleSettingsPanel()" title="API Key 설정" class="p-2 rounded-lg text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-800 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- 2. 접이식 API Key 설정 패널 (localStorage 전용) -->
+    <section id="settings-panel" class="hidden bg-slate-100/90 dark:bg-slate-800/70 border-b border-slate-200 dark:border-slate-800 px-4 py-3.5 text-xs space-y-3 shrink-0">
+      <div class="flex items-center justify-between">
+        <span class="font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5 text-rose-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+          EXAONE API Key 보안 설정
+        </span>
+        <a href="https://docs.exaone.ai" target="_blank" rel="noopener noreferrer" class="text-rose-600 dark:text-rose-400 hover:underline font-medium">
+          docs.exaone.ai 키 발급 ↗
+        </a>
+      </div>
+
+      <p class="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+        입력한 키는 외부 서버나 소스 코드에 포함되지 않고 현재 브라우저의 <code class="px-1 py-0.5 bg-slate-200 dark:bg-slate-700 rounded">localStorage</code>에만 저장됩니다.
+      </p>
+
+      <div class="flex gap-1.5">
+        <div class="relative flex-1">
+          <input
+            id="api-key-input"
+            type="password"
+            placeholder="발급받은 EXAONE API Key 입력..."
+            autocomplete="off"
+            class="w-full pl-3 pr-8 py-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-500 text-xs"
+          />
+          <button type="button" onclick="toggleKeyVisibility()" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200" title="키 보기/숨기기">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+            </svg>
+          </button>
+        </div>
+        <button type="button" onclick="saveApiKey()" class="px-3 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold transition shrink-0">
+          저장
+        </button>
+        <button type="button" onclick="clearApiKey()" class="px-2.5 py-2 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 font-medium transition shrink-0">
+          삭제
+        </button>
+      </div>
+
+      <!-- 고급 엔드포인트 설정 (선택적 프록시 경유 지원) -->
+      <details class="pt-1">
+        <summary class="cursor-pointer text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 select-none">
+          고급 설정 (API Endpoint / 시스템 프롬프트 직접 수정)
+        </summary>
+        <div class="mt-2 space-y-2">
+          <div>
+            <label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-1">API Endpoint URL</label>
+            <input
+              id="endpoint-input"
+              type="text"
+              value="https://api.exaone.ai/v1/chat/completions"
+              class="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-[11px] font-mono text-slate-700 dark:text-slate-300"
+            />
+          </div>
+          <div>
+            <label class="block text-[11px] text-slate-500 dark:text-slate-400 mb-1">현재 모드 시스템 프롬프트</label>
+            <textarea
+              id="system-prompt-input"
+              rows="2"
+              class="w-full px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300 resize-none"
+            ></textarea>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <!-- 3. 작업 모드 탭 & 추론 깊이(reasoning_effort) 선택 바 -->
+    <div class="px-3 py-2 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 shrink-0">
+      <!-- 모드 프리셋 탭 -->
+      <div class="flex items-center bg-slate-200/70 dark:bg-slate-800 p-0.5 rounded-xl text-xs font-medium">
+        <button
+          type="button"
+          data-mode="summarize"
+          onclick="setMode('summarize')"
+          class="mode-tab px-2.5 py-1.5 rounded-lg transition bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm"
+        >
+          핵심 요약
+        </button>
+        <button
+          type="button"
+          data-mode="qa"
+          onclick="setMode('qa')"
+          class="mode-tab px-2.5 py-1.5 rounded-lg transition text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+        >
+          즉문즉답
+        </button>
+        <button
+          type="button"
+          data-mode="refine"
+          onclick="setMode('refine')"
+          class="mode-tab px-2.5 py-1.5 rounded-lg transition text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+        >
+          문장 교정/압축
+        </button>
+      </div>
+
+      <!-- reasoning_effort 드롭다운 -->
+      <div class="flex items-center gap-1.5">
+        <label for="reasoning-select" class="text-[11px] font-medium text-slate-500 dark:text-slate-400">추론 깊이</label>
+        <select
+          id="reasoning-select"
+          class="text-xs font-medium bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-rose-500"
+        >
+          <option value="low">low (빠른 응답)</option>
+          <option value="high" selected>high (깊이 있는 추론)</option>
+          <option value="max">max (최대 추론)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 4. 대화 및 출력 히스토리 영역 -->
+    <main id="chat-container" class="flex-1 overflow-y-auto p-4 space-y-4 bg-white dark:bg-slate-900">
+      <!-- 초기 안내 카드 -->
+      <div id="welcome-state" class="h-full flex flex-col items-center justify-center text-center px-4 py-6">
+        <div class="w-11 h-11 rounded-2xl bg-rose-500/10 text-rose-500 flex items-center justify-center mb-3 border border-rose-500/20">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          </svg>
+        </div>
+        <h2 class="text-sm font-bold text-slate-800 dark:text-slate-100 mb-1">K-EXAONE 2.5 스터디 & 요약 위젯</h2>
+        <p id="mode-description" class="text-xs text-slate-500 dark:text-slate-400 max-w-xs leading-relaxed mb-4">
+          판례, 논문, 강의 노트 등 긴 텍스트를 넣으면 <strong>쟁점 · 핵심 내용 · 결론</strong> 순으로 깔끔하게 도식화해 드립니다.
+        </p>
+        <div class="grid grid-cols-1 gap-1.5 w-full max-w-xs text-left text-[11px]">
+          <button type="button" onclick="quickStart('summarize')" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-rose-500/50 dark:hover:border-rose-500/50 bg-slate-50/70 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 flex items-center justify-between transition">
+            <span>📑 판례·논문 두괄식 3단 요약</span>
+            <span class="text-slate-400">→</span>
+          </button>
+          <button type="button" onclick="quickStart('qa')" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-rose-500/50 dark:hover:border-rose-500/50 bg-slate-50/70 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 flex items-center justify-between transition">
+            <span>💡 헷갈리는 전공·법률 개념 즉문즉답</span>
+            <span class="text-slate-400">→</span>
+          </button>
+          <button type="button" onclick="quickStart('refine')" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-rose-500/50 dark:hover:border-rose-500/50 bg-slate-50/70 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 flex items-center justify-between transition">
+            <span>✍️ 답안지·노트 문장 압축 및 교정</span>
+            <span class="text-slate-400">→</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 메시지 리스트가 동적으로 렌더링되는 영역 -->
+      <div id="messages-list" class="space-y-3 hidden"></div>
+
+      <!-- 로딩 스피너 및 경과 시간 표시 -->
+      <div id="loading-indicator" class="hidden">
+        <div class="flex items-center gap-2.5 px-3.5 py-2.5 rounded-2xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700/70 w-fit text-xs text-slate-600 dark:text-slate-300">
+          <svg class="w-4 h-4 animate-spin text-rose-500 shrink-0" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          <span>K-EXAONE 2.5 추론 중...</span>
+          <span id="elapsed-timer" class="font-mono text-[11px] text-rose-600 dark:text-rose-400 font-semibold">0.0s</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- 5. 토스트 알림 배너 (복사 완료, 키 저장 등) -->
+    <div id="toast-banner" class="hidden px-4 py-1.5 bg-slate-800 dark:bg-slate-200 text-white dark:text-slate-900 text-xs font-medium text-center transition-all"></div>
+
+    <!-- 6. 하단 텍스트 입력 영역 -->
+    <footer class="p-3 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 shrink-0">
+      <div class="relative flex flex-col rounded-xl bg-white dark:bg-slate-800/90 border border-slate-300 dark:border-slate-700 focus-within:ring-2 focus-within:ring-rose-500 focus-within:border-transparent transition">
+        <textarea
+          id="user-input"
+          rows="3"
+          placeholder="요약할 본문이나 질문을 입력하세요... (Enter 전송 / Shift+Enter 줄바꿈)"
+          class="w-full px-3.5 pt-2.5 pb-1 bg-transparent text-xs sm:text-sm text-slate-800 dark:text-slate-100 placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none resize-none"
+        ></textarea>
+
+        <div class="flex items-center justify-between px-3 py-1.5 border-t border-slate-100 dark:border-slate-700/60">
+          <div class="flex items-center gap-2 text-[11px] text-slate-400 dark:text-slate-500">
+            <span id="char-counter">0자</span>
+            <span>·</span>
+            <label class="inline-flex items-center gap-1 cursor-pointer select-none">
+              <input id="enter-to-send" type="checkbox" checked class="rounded text-rose-600 focus:ring-0 w-3 h-3" />
+              <span>Enter로 바로 전송</span>
+            </label>
+          </div>
+
+          <button
+            id="send-btn"
+            type="button"
+            onclick="handleSend()"
+            class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-50 disabled:pointer-events-none text-white text-xs font-semibold shadow-sm transition"
+          >
+            <span>실행</span>
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    // =========================================================================
+    // 1. 상태 관리 및 모드별 시스템 프롬프트 프리셋
+    // =========================================================================
+    const STORAGE_KEY_API = 'exaone_api_key';
+    const STORAGE_KEY_THEME = 'exaone_widget_theme';
+    const MODEL_NAME = 'k-exaone_v2.5';
+
+    const MODE_PRESETS = {
+      summarize: {
+        label: '핵심 요약',
+        description: '판례, 논문, 강의 노트 등 긴 텍스트를 넣으면 <strong>쟁점 · 핵심 내용 · 결론</strong> 순으로 깔끔하게 도식화해 드립니다.',
+        placeholder: '요약할 판례, 기사, 전공 텍스트를 붙여넣으세요...',
+        systemPrompt:
+          '당신은 전문 학술 및 법률·기술 요약 어시스턴트입니다. 사용자가 입력한 텍스트를 분석하여 반드시 다음 구조의 불릿 포인트로 명확하게 요약하세요:\n1. **[핵심 쟁점 / 주제]**: 글이 다루는 핵심 질문이나 문제를 한 줄로 정의\n2. **[주요 내용 및 논거]**: 핵심 논리나 사실을 3~5개의 개조식 불릿 포인트로 정리\n3. **[결론 및 시사점]**: 최종 결론이나 암기해야 할 핵심 키워드 요약\n불필요한 인사말 없이 곧바로 구조화된 본문을 출력하세요.',
+        sample:
+          '대법원 판결 요지: 특허발명의 보호범위는 청구범위에 적혀 있는 사항에 의하여 정하여지는 것이 원칙이고, 다만 청구범위에 적혀 있는 사항만으로 특허발명의 기술적 구성을 알 수 없거나 알 수 있더라도 그 기술적 범위를 확정할 수 없는 경우에는 발명의 설명이나 도면에 적힌 사항을 참작하여 청구범위를 해석할 수 있다. 그러나 발명의 설명이나 도면을 참작한다고 하더라도 청구범위를 확장하거나 제한하여 해석하는 것은 허용되지 않는다.'
+      },
+      qa: {
+        label: '즉문즉답',
+        description: '공부 중 막히는 법률 조문, 공학 개념, 코딩 문법 등을 물어보면 군더더기 없이 핵심만 정확히 답변합니다.',
+        placeholder: '궁금한 개념이나 질문을 간결하게 입력하세요...',
+        systemPrompt:
+          '당신은 명확하고 정확한 답변을 제공하는 학습 튜터이자 기술 어시스턴트입니다. 질문의 핵심 정의를 두괄식으로 먼저 제시하고, 이해를 돕는 비교나 예시를 간결한 마크다운 불릿 포인트나 코드 블록으로 설명하세요.',
+        sample:
+          'TCP의 혼잡 제어(Congestion Control)에서 Slow Start와 Congestion Avoidance 단계의 차이점을 핵심 위주로 비교해 줘.'
+      },
+      refine: {
+        label: '문장 교정/압축',
+        description: '초안 노트나 서술형 답안지를 넣으면 문맥을 매끄럽게 다듬고 두괄식 개조식 문장으로 압축해 줍니다.',
+        placeholder: '다듬거나 압축할 초안 문장을 입력하세요...',
+        systemPrompt:
+          '당신은 전문 에디터이자 수험 답안 첨삭가입니다. 사용자가 입력한 거친 메모나 초안을 의미 손실 없이 가장 명확하고 간결한 한국어 문장으로 교정하세요. 결과물은 1) **[다듬은 문장]**과 2) **[한 줄 핵심 압축]** 두 가지 버전으로 제시하세요.',
+        sample:
+          '이번에 엑사원 2.5가 무료 API로 풀렸는데 이게 왜 중요하냐면 원래는 무거운 모델을 직접 다운받아서 비싼 GPU 서버에 올려야만 쓸 수 있었는데 이제는 그냥 인터넷 주소랑 키만 있으면 내 웹사이트에 바로 붙여서 공짜로 호출할 수 있어서 개인 개발자한테 엄청 유리해졌다는 점이다.'
+      }
+    };
+
+    let currentMode = 'summarize';
+    let chatHistory = [];
+    let isRequesting = false;
+    let timerInterval = null;
+
+    // =========================================================================
+    // 2. 초기화 로직
+    // =========================================================================
+    window.addEventListener('DOMContentLoaded', () => {
+      initTheme();
+      loadApiKeyStatus();
+      setMode('summarize');
+
+      const userInput = document.getElementById('user-input');
+      const charCounter = document.getElementById('char-counter');
+
+      userInput.addEventListener('input', () => {
+        charCounter.textContent = `${userInput.value.length.toLocaleString()}자`;
+      });
+
+      userInput.addEventListener('keydown', (e) => {
+        const enterToSend = document.getElementById('enter-to-send').checked;
+        if (e.key === 'Enter') {
+          if ((enterToSend && !e.shiftKey) || e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            handleSend();
+          }
+        }
+      });
+    });
+
+    // =========================================================================
+    // 3. 테마 및 API Key 관리 (localStorage)
+    // =========================================================================
+    function initTheme() {
+      const savedTheme = localStorage.getItem(STORAGE_KEY_THEME);
+      if (savedTheme === 'light') {
+        document.documentElement.classList.remove('dark');
+      } else {
+        document.documentElement.classList.add('dark');
+      }
+    }
+
+    function toggleTheme() {
+      const isDark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem(STORAGE_KEY_THEME, isDark ? 'dark' : 'light');
+    }
+
+    function toggleSettingsPanel() {
+      const panel = document.getElementById('settings-panel');
+      panel.classList.toggle('hidden');
+    }
+
+    function toggleKeyVisibility() {
+      const input = document.getElementById('api-key-input');
+      input.type = input.type === 'password' ? 'text' : 'password';
+    }
+
+    function loadApiKeyStatus() {
+      const savedKey = localStorage.getItem(STORAGE_KEY_API) || '';
+      const input = document.getElementById('api-key-input');
+      const badge = document.getElementById('key-status-badge');
+      const dot = document.getElementById('key-status-dot');
+      const text = document.getElementById('key-status-text');
+
+      input.value = savedKey;
+
+      if (savedKey.trim().length > 5) {
+        badge.className =
+          'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 border border-emerald-300/50 dark:border-emerald-800/60 cursor-pointer';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
+        text.textContent = 'API 연결 준비됨';
+      } else {
+        badge.className =
+          'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300/50 dark:border-amber-800/60 cursor-pointer';
+        dot.className = 'w-1.5 h-1.5 rounded-full bg-amber-500';
+        text.textContent = '키 미설정';
+      }
+    }
+
+    function saveApiKey() {
+      const input = document.getElementById('api-key-input');
+      const key = input.value.trim();
+      if (!key) {
+        showToast('API Key를 입력해 주세요.');
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY_API, key);
+      loadApiKeyStatus();
+      document.getElementById('settings-panel').classList.add('hidden');
+      showToast('브라우저 localStorage에 API Key가 안전하게 저장되었습니다.');
+    }
+
+    function clearApiKey() {
+      localStorage.removeItem(STORAGE_KEY_API);
+      document.getElementById('api-key-input').value = '';
+      loadApiKeyStatus();
+      showToast('저장된 API Key가 삭제되었습니다.');
+    }
+
+    // =========================================================================
+    // 4. 작업 모드 전환 및 샘플 삽입
+    // =========================================================================
+    function setMode(mode) {
+      if (!MODE_PRESETS[mode]) return;
+      currentMode = mode;
+
+      // 탭 버튼 스타일 업데이트
+      document.querySelectorAll('.mode-tab').forEach((btn) => {
+        if (btn.dataset.mode === mode) {
+          btn.className =
+            'mode-tab px-2.5 py-1.5 rounded-lg transition bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm';
+        } else {
+          btn.className =
+            'mode-tab px-2.5 py-1.5 rounded-lg transition text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white';
+        }
+      });
+
+      const preset = MODE_PRESETS[mode];
+      document.getElementById('mode-description').innerHTML = preset.description;
+      document.getElementById('user-input').placeholder = preset.placeholder;
+      document.getElementById('system-prompt-input').value = preset.systemPrompt;
+
+      // 즉문즉답은 빠른 응답(low), 요약/교정은 깊이 있는 추론(high)으로 기본 추천
+      const reasoningSelect = document.getElementById('reasoning-select');
+      reasoningSelect.value = mode === 'qa' ? 'low' : 'high';
+    }
+
+    function quickStart(mode) {
+      setMode(mode);
+      insertSamplePrompt();
+    }
+
+    function insertSamplePrompt() {
+      const preset = MODE_PRESETS[currentMode];
+      const userInput = document.getElementById('user-input');
+      userInput.value = preset.sample;
+      document.getElementById('char-counter').textContent = `${userInput.value.length.toLocaleString()}자`;
+      userInput.focus();
+    }
+
+    // =========================================================================
+    // 5. K-EXAONE 2.5 API 호출 및 메시지 렌더링
+    // =========================================================================
+    async function handleSend() {
+      if (isRequesting) return;
+
+      const userInput = document.getElementById('user-input');
+      const promptText = userInput.value.trim();
+      if (!promptText) return;
+
+      const apiKey = (localStorage.getItem(STORAGE_KEY_API) || '').trim();
+      if (!apiKey) {
+        document.getElementById('settings-panel').classList.remove('hidden');
+        document.getElementById('api-key-input').focus();
+        showToast('먼저 상단 설정 패널에서 EXAONE API Key를 입력해 주세요.');
+        return;
+      }
+
+      const endpoint = document.getElementById('endpoint-input').value.trim() || 'https://api.exaone.ai/v1/chat/completions';
+      const systemPrompt = document.getElementById('system-prompt-input').value.trim();
+      const reasoningEffort = document.getElementById('reasoning-select').value;
+
+      // UI 전환: 웰컴 화면 숨기고 메시지 목록 표시
+      document.getElementById('welcome-state').classList.add('hidden');
+      const messagesList = document.getElementById('messages-list');
+      messagesList.classList.remove('hidden');
+
+      // 사용자 메시지 추가
+      appendMessage({
+        role: 'user',
+        content: promptText,
+        meta: `${MODE_PRESETS[currentMode].label} · effort: ${reasoningEffort}`
+      });
+
+      userInput.value = '';
+      document.getElementById('char-counter').textContent = '0자';
+
+      // 요청 시작 상태 표시
+      setLoadingState(true);
+
+      // 최근 문맥 유지를 위해 직전 대화 최대 4개까지 포함
+      const recentContext = chatHistory.slice(-4).map((m) => ({
+        role: m.role,
+        content: m.content
+      }));
+
+      const payload = {
+        model: MODEL_NAME,
+        reasoning_effort: reasoningEffort,
+        max_tokens: 2048,
+        temperature: 0.3,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...recentContext,
+          { role: 'user', content: promptText }
+        ]
+      };
+
+      const startTime = performance.now();
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const elapsedSec = ((performance.now() - startTime) / 1000).toFixed(1);
+
+        if (!response.ok) {
+          let errDetail = `HTTP ${response.status}`;
+          try {
+            const errJson = await response.json();
+            errDetail = errJson.error?.message || errJson.message || JSON.stringify(errJson);
+          } catch (_) {
+            const errText = await response.text();
+            if (errText) errDetail = errText.slice(0, 200);
+          }
+          throw new Error(`API 응답 오류 (${response.status}): ${errDetail}`);
+        }
+
+        const data = await response.json();
+        const assistantReply =
+          data.choices?.[0]?.message?.content ||
+          '응답 텍스트가 비어 있습니다. 파라미터나 입력 내용을 확인해 주세요.';
+
+        chatHistory.push({ role: 'user', content: promptText });
+        chatHistory.push({ role: 'assistant', content: assistantReply });
+
+        appendMessage({
+          role: 'assistant',
+          content: assistantReply,
+          meta: `k-exaone_v2.5 · ${elapsedSec}초 소요 · effort: ${reasoningEffort}`
+        });
+      } catch (error) {
+        let diagnosticMsg = error.message || '알 수 없는 오류가 발생했습니다.';
+        if (error.name === 'TypeError' && diagnosticMsg.includes('Failed to fetch')) {
+          diagnosticMsg =
+            '네트워크 연결 또는 브라우저 CORS 차단 오류가 발생했습니다.\n' +
+            '1) API Key가 유효한지(발급 후 30일 이내) 확인해 주세요.\n' +
+            '2) 로컬 파일(file://)이 아닌 로컬 서버(Live Server 등)나 대시보드 호스팅 환경에서 실행 중인지 확인해 주세요.';
+        }
+
+        appendMessage({
+          role: 'error',
+          content: diagnosticMsg,
+          meta: '요청 실패 진단'
+        });
+      } finally {
+        setLoadingState(false);
+      }
+    }
+
+    function setLoadingState(loading) {
+      isRequesting = loading;
+      const sendBtn = document.getElementById('send-btn');
+      const indicator = document.getElementById('loading-indicator');
+      const timerEl = document.getElementById('elapsed-timer');
+
+      sendBtn.disabled = loading;
+
+      if (loading) {
+        indicator.classList.remove('hidden');
+        let start = performance.now();
+        timerEl.textContent = '0.0s';
+        timerInterval = setInterval(() => {
+          const sec = ((performance.now() - start) / 1000).toFixed(1);
+          timerEl.textContent = `${sec}s`;
+        }, 100);
+        scrollToBottom();
+      } else {
+        indicator.classList.add('hidden');
+        if (timerInterval) clearInterval(timerInterval);
+      }
+    }
+
+    function appendMessage({ role, content, meta }) {
+      const messagesList = document.getElementById('messages-list');
+      const wrapper = document.createElement('div');
+
+      if (role === 'user') {
+        wrapper.className = 'flex flex-col items-end';
+        wrapper.innerHTML = `
+          <div class="max-w-[88%] rounded-2xl rounded-tr-sm px-3.5 py-2.5 bg-rose-600 text-white text-xs sm:text-sm leading-relaxed shadow-sm whitespace-pre-wrap break-words">${escapeHtml(content)}</div>
+          <span class="text-[10px] text-slate-400 mt-1 px-1">${escapeHtml(meta || '')}</span>
+        `;
+      } else if (role === 'assistant') {
+        const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+        wrapper.className = 'flex flex-col items-start';
+        wrapper.innerHTML = `
+          <div class="w-full rounded-2xl rounded-tl-sm p-3.5 bg-slate-100 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700/80 text-slate-800 dark:text-slate-100 text-xs sm:text-sm leading-relaxed shadow-sm">
+            <div class="md-content break-words">${renderMarkdown(content)}</div>
+            <div class="mt-2.5 pt-2 border-t border-slate-200/80 dark:border-slate-700/70 flex items-center justify-between text-[11px] text-slate-400">
+              <span>${escapeHtml(meta || '')}</span>
+              <button
+                type="button"
+                onclick="copyResponse('${msgId}')"
+                class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 font-medium transition"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                <span>복사</span>
+              </button>
+            </div>
+            <textarea id="${msgId}" class="hidden">${escapeHtml(content)}</textarea>
+          </div>
+        `;
+      } else {
+        // 에러 메시지 카드
+        wrapper.className = 'flex flex-col items-start';
+        wrapper.innerHTML = `
+          <div class="w-full rounded-2xl p-3 bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800/70 text-rose-800 dark:text-rose-200 text-xs leading-relaxed">
+            <div class="font-bold mb-1 flex items-center gap-1.5">
+              <svg class="w-4 h-4 text-rose-500 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span>${escapeHtml(meta || '오류 안내')}</span>
+            </div>
+            <div class="whitespace-pre-wrap text-[11px] opacity-90">${escapeHtml(content)}</div>
+          </div>
+        `;
+      }
+
+      messagesList.appendChild(wrapper);
+      scrollToBottom();
+    }
+
+    function clearHistory() {
+      chatHistory = [];
+      const messagesList = document.getElementById('messages-list');
+      messagesList.innerHTML = '';
+      messagesList.classList.add('hidden');
+      document.getElementById('welcome-state').classList.remove('hidden');
+      showToast('대화 기록이 초기화되었습니다.');
+    }
+
+    function scrollToBottom() {
+      const container = document.getElementById('chat-container');
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // =========================================================================
+    // 6. 마크다운 경량 파서 및 클립보드 복사 유틸리티
+    // =========================================================================
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function renderMarkdown(rawText) {
+      let text = escapeHtml(rawText);
+
+      // 코드 블록 (```code```)
+      text = text.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+        return `<pre><code>${code.trim()}</code></pre>`;
+      });
+
+      // 인라인 코드 (`code`)
+      text = text.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+
+      // 굵은 글씨 (**bold**)
+      text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+      // 제목 (### Heading)
+      text = text.replace(/^### (.+)$/gm, '<h4 class="font-bold text-slate-900 dark:text-white mt-2 mb-1">$1</h4>');
+      text = text.replace(/^## (.+)$/gm, '<h3 class="font-bold text-slate-900 dark:text-white mt-2.5 mb-1">$1</h3>');
+
+      // 불릿 리스트 (- item 또는 * item)
+      text = text.replace(/^(?:-|\*) (.+)$/gm, '<li>$1</li>');
+      text = text.replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`);
+
+      // 줄바꿈 처리
+      text = text.replace(/\n{2,}/g, '</p><p>');
+      text = text.replace(/\n/g, '<br/>');
+
+      return `<p>${text}</p>`;
+    }
+
+    function copyResponse(elementId) {
+      const hiddenTextarea = document.getElementById(elementId);
+      if (!hiddenTextarea) return;
+
+      const temp = document.createElement('textarea');
+      temp.value = hiddenTextarea.value;
+      document.body.appendChild(temp);
+      temp.select();
+      document.execCommand('copy');
+      document.body.removeChild(temp);
+
+      showToast('응답 내용이 클립보드에 복사되었습니다.');
+    }
+
+    function showToast(message) {
+      const banner = document.getElementById('toast-banner');
+      banner.textContent = message;
+      banner.classList.remove('hidden');
+      clearTimeout(window.__toastTimer);
+      window.__toastTimer = setTimeout(() => {
+        banner.classList.add('hidden');
+      }, 2600);
+    }
+  </script>
+</body>
+</html>
