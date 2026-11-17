@@ -788,6 +788,25 @@
         this._renderOverlayStructure();
         this._tickRender();
       },
+      setGoalMin: function (nextMin) {
+        const m = clampNum(Math.round(Number(nextMin) || 0), 1, 360);
+        const s = this.current();
+        if (s) {
+          s.goalMin = m;
+          if (s.subtitle) s.subtitle = s.subtitle.replace(/목표\s+\d+분/, '목표 ' + m + '분');
+          sset(ACTIVE_KEY, JSON.stringify(s));
+        }
+        Store.update(function (dd) {
+          dd.settings = dd.settings || {};
+          dd.settings.focusGoalMin = m;
+        });
+        if (s) {
+          this._renderOverlayStructure();
+          this._tickRender();
+        }
+        window.dispatchEvent(new CustomEvent('timer:changed'));
+        return m;
+      },
       openOverlay: function () {
         if (!this.current()) return;
         overlayOpen = true;
@@ -876,10 +895,50 @@
           onclick: function () { if (s.pausedAt) self.resume(); else self.pause(); },
         }, s.pausedAt ? '다시 집중 시작' : '잠시 쉬기');
 
+        const curGoal = clampNum(s.goalMin || 50, 1, 360);
+        const ovGoalInput = el('input', {
+          type: 'number',
+          class: 'focus-ov-goal-input',
+          min: '1', max: '360',
+          value: String(curGoal),
+          'aria-label': '목표 집중 시간(분)',
+        });
+        function applyOvGoal(v) {
+          const val = clampNum(Math.round(Number(v) || curGoal), 1, 360);
+          self.setGoalMin(val);
+        }
+        ovGoalInput.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); applyOvGoal(ovGoalInput.value); }
+        });
+        ovGoalInput.addEventListener('change', function () { applyOvGoal(ovGoalInput.value); });
+
+        const ovPresets = [15, 25, 50, 80, 120];
+        const ovGoalBar = el('div', { class: 'focus-ov-goal-bar', 'aria-label': '집중 시간 직접 설정' }, [
+          el('div', { class: 'focus-ov-goal-row' }, [
+            el('button', { type: 'button', class: 'focus-ov-goal-pill', title: '5분 줄이기', onclick: function () { applyOvGoal(Math.max(1, curGoal - 5)); } }, '-5분'),
+          ].concat(ovPresets.map(function (m) {
+            return el('button', {
+              type: 'button',
+              class: 'focus-ov-goal-pill',
+              'aria-pressed': curGoal === m ? 'true' : 'false',
+              onclick: function () { applyOvGoal(m); },
+            }, m + '분');
+          })).concat([
+            el('button', { type: 'button', class: 'focus-ov-goal-pill', title: '5분 늘리기', onclick: function () { applyOvGoal(Math.min(360, curGoal + 5)); } }, '+5분'),
+          ])),
+          el('div', { class: 'focus-ov-goal-custom' }, [
+            el('span', { class: 'focus-ov-goal-label' }, '직접 설정'),
+            ovGoalInput,
+            el('span', { class: 'focus-ov-goal-unit' }, '분'),
+            el('button', { type: 'button', class: 'focus-ov-goal-pill', onclick: function () { applyOvGoal(ovGoalInput.value); } }, '적용'),
+          ]),
+        ]);
+
         const center = el('div', { class: 'focus-ov-center' }, [
           el('div', { class: 'focus-ov-eyebrow' }, s.pausedAt ? 'PAUSED · 잠시 멈춤' : 'FOCUS SESSION'),
           el('div', { class: 'focus-ov-headline' }, s.pausedAt ? '잠시 숨을 고르고 있습니다.' : '지금은, 한 가지에만.'),
           ringWrap,
+          ovGoalBar,
           el('div', { class: 'focus-ov-task' }, s.title || '수험 공부'),
           el('div', { class: 'focus-ov-task-sub' }, [
             sub ? sub.name : '수험 집중',
@@ -1555,6 +1614,77 @@
     root.append(grid);
   }
 
+  // 집중 시간 직접 선택 위젯 (홈 '지금 할 공부' 카드 공용)
+  function buildFocusDurationPicker(initialMin, onChange) {
+    let selected = clampNum(Math.round(Number(initialMin) || 50), 1, 360);
+    const presets = [15, 25, 50, 80, 120];
+    if (presets.indexOf(selected) < 0) {
+      presets.push(selected);
+      presets.sort(function (a, b) { return a - b; });
+    }
+    const wrap = el('div', { class: 'focus-duration-picker', role: 'group', 'aria-label': '집중 시간 선택' });
+    const chipBtns = [];
+    const customInput = el('input', {
+      type: 'number',
+      class: 'focus-dur-input',
+      min: '1', max: '360', step: '5',
+      value: String(selected),
+      'aria-label': '직접 입력 집중 시간(분)',
+    });
+
+    function setMinutes(nextVal, persistDefault) {
+      selected = clampNum(Math.round(Number(nextVal) || selected), 1, 360);
+      customInput.value = String(selected);
+      chipBtns.forEach(function (item) {
+        item.btn.setAttribute('aria-pressed', item.min === selected ? 'true' : 'false');
+      });
+      if (persistDefault) {
+        Store.update(function (dd) {
+          dd.settings = dd.settings || {};
+          dd.settings.focusGoalMin = selected;
+        });
+      }
+      if (typeof onChange === 'function') onChange(selected);
+    }
+
+    wrap.append(el('span', { class: 'focus-dur-label' }, '집중 시간'));
+    presets.forEach(function (m) {
+      const btn = el('button', {
+        type: 'button',
+        class: 'focus-dur-chip',
+        'aria-pressed': selected === m ? 'true' : 'false',
+        onclick: function () { setMinutes(m, true); },
+      }, m + '분');
+      chipBtns.push({ min: m, btn: btn });
+      wrap.append(btn);
+    });
+
+    customInput.addEventListener('input', function () {
+      const raw = Number(customInput.value);
+      if (raw >= 1 && raw <= 360) {
+        selected = Math.round(raw);
+        chipBtns.forEach(function (item) {
+          item.btn.setAttribute('aria-pressed', item.min === selected ? 'true' : 'false');
+        });
+        if (typeof onChange === 'function') onChange(selected);
+      }
+    });
+    customInput.addEventListener('change', function () { setMinutes(customInput.value, true); });
+
+    wrap.append(el('label', { class: 'focus-dur-custom' }, [
+      customInput,
+      el('span', {}, '분'),
+    ]));
+
+    return {
+      el: wrap,
+      getMinutes: function () {
+        const cur = Number(customInput.value);
+        return clampNum(Math.round(cur || selected), 1, 360);
+      },
+    };
+  }
+
   // 좌상단 히어로: '지금 할 공부' (제안서 6·8쪽)
   function buildNowCard(d, ctx) {
     const card = el('div', { class: 'now-study-card' });
@@ -1602,19 +1732,27 @@
     }
 
     if (!title) {
+      let freeMin = clampNum((d.settings && d.settings.focusGoalMin) || 25, 1, 360);
+      const startBtnLabel = el('span', {}, ' ' + freeMin + '분 집중 시작');
+      const freePicker = buildFocusDurationPicker(freeMin, function (m) {
+        freeMin = m;
+        startBtnLabel.textContent = ' ' + m + '분 집중 시작';
+      });
       main.append(
         el('div', { class: 'row' }, [el('span', { class: 'tag tag-exam' }, '지금 할 공부')]),
         el('h2', { class: 'now-study-title' }, '오늘 집중할 첫 공부를 골라 보세요'),
-        el('div', { class: 'now-study-meta' }, '부담 없이 25분 집중을 바로 시작하거나, 핵심 과업 또는 주간 계획에서 블록을 지정하세요.'),
+        el('div', { class: 'now-study-meta' }, '원하는 집중 시간을 선택·입력해 바로 시작하거나, 핵심 과업·주간 계획에서 블록을 지정하세요.'),
+        freePicker.el,
         el('div', { class: 'now-study-actions' }, [
           el('button', {
             class: 'btn btn-primary btn-lg',
             onclick: function () {
-              Timer.start(null, null, '25분 자유 집중', { goalMin: 25, subtitle: '첫 공부 빠른 실행' });
+              const m = freePicker.getMinutes();
+              Timer.start(null, null, m + '분 자유 집중', { goalMin: m, subtitle: '자유 집중 · 목표 ' + m + '분' });
               ctx.refresh();
               Timer.openOverlay();
             },
-          }, [svgIcon('play', 18), ' 25분 집중 시작']),
+          }, [svgIcon('play', 18), startBtnLabel]),
           el('button', { class: 'btn', onclick: function () { openTaskEditor(null, ctx, { pinToday: true }); } }, '+ 핵심 과업 만들기'),
           el('button', { class: 'btn btn-ghost', onclick: function () { ctx.navigate('week'); } }, '주간 계획 열기'),
         ]),
@@ -1638,6 +1776,13 @@
       return subjectId && a.subjectId === subjectId;
     }).sort(function (a, b) { return (b.date || '').localeCompare(a.date || ''); })[0];
 
+    let pickedMin = clampNum(goalMin || (d.settings && d.settings.focusGoalMin) || 50, 1, 360);
+    const startTextEl = el('span', {}, ' 집중 시작 (' + pickedMin + '분)');
+    const picker = buildFocusDurationPicker(pickedMin, function (m) {
+      pickedMin = m;
+      startTextEl.textContent = ' 집중 시작 (' + m + '분)';
+    });
+
     main.append(
       el('div', { class: 'row', style: 'gap:6px' }, [
         el('span', { class: 'tag tag-exam' }, '지금 할 공부'),
@@ -1646,16 +1791,18 @@
       ]),
       el('h2', { class: 'now-study-title' }, title),
       el('div', { class: 'now-study-meta' }, timeLabel || '수험 집중 세션'),
+      picker.el,
     );
 
     const actions = el('div', { class: 'now-study-actions' });
     actions.append(el('button', {
       class: 'btn btn-primary btn-lg',
       onclick: function () {
-        Timer.start(task ? task.id : null, subjectId, title, { goalMin: goalMin, subtitle: timeLabel || '' });
+        const m = picker.getMinutes();
+        Timer.start(task ? task.id : null, subjectId, title, { goalMin: m, subtitle: '목표 ' + m + '분' });
         ctx.refresh();
       },
-    }, [svgIcon('play', 18), ' 집중 시작']));
+    }, [svgIcon('play', 18), startTextEl]));
 
     actions.append(el('button', {
       class: 'btn',
@@ -2002,7 +2149,7 @@
       ]),
       isRunning
         ? el('button', { class: 'btn btn-primary btn-sm', onclick: function () { Timer.openOverlay(); } }, '집중 화면')
-        : el('button', { class: 'btn btn-primary btn-sm', onclick: function () { Timer.start(t.id, t.subjectId, t.title, { goalMin: t.estMin || 50 }); ctx.refresh(); } }, [svgIcon('play', 14), ' 집중']),
+        : el('button', { class: 'btn btn-primary btn-sm', onclick: function () { Timer.start(t.id, t.subjectId, t.title, { goalMin: t.estMin || (Store.data().settings && Store.data().settings.focusGoalMin) || 50 }); ctx.refresh(); } }, [svgIcon('play', 14), ' 집중']),
       el('button', { class: 'btn btn-sm', onclick: function () { openTaskEditor(t, ctx); } }, '편집'),
     ]);
   }
@@ -7222,7 +7369,7 @@
     const examDate = el('input', { type: 'date', value: d.settings.examDate || '' });
     const confirmed = el('input', { type: 'checkbox', checked: !!d.settings.examDateConfirmed, style: 'width:20px;min-height:20px' });
     const goal = el('input', { type: 'number', value: d.settings.weeklyExamGoalH, min: '1', max: '100' });
-    const focusMin = el('input', { type: 'number', value: d.settings.focusGoalMin || 50, min: '15', max: '240' });
+    const focusMin = el('input', { type: 'number', value: d.settings.focusGoalMin || 50, min: '1', max: '360' });
     const elective = el('input', { type: 'text', value: d.settings.electiveSubject || '' });
     examCard.append(
       el('div', { class: 'field' }, [el('label', {}, '변리사 2차 시험일'), examDate, el('p', { class: 'hint' }, '한국산업인력공단 Q-Net 공식 공고를 확인한 날짜만 입력하세요. 확인 전에는 임의 D-Day를 표시하지 않습니다.')]),
@@ -7237,7 +7384,7 @@
           dd.settings.examDate = examDate.value || null;
           dd.settings.examDateConfirmed = confirmed.checked;
           dd.settings.weeklyExamGoalH = Number(goal.value) || 30;
-          dd.settings.focusGoalMin = clampNum(focusMin.value, 15, 240);
+          dd.settings.focusGoalMin = clampNum(focusMin.value, 1, 360);
           dd.settings.electiveSubject = elective.value;
           const es = dd.subjects.find(function (s) { return s.id === 'sub-elec'; });
           if (es && elective.value.trim()) es.name = elective.value.trim();

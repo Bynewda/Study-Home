@@ -450,3 +450,152 @@ body.keyboard-open .ai-widget-root {
   gap: 8px;
   margin-top: 4px;
 }
+
+/* --- 7. 집중 타이머 시간 직접 선택기 (홈 '지금 할 공부' + 집중 오버레이) --- */
+.focus-duration-picker {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -4px 0 16px;
+}
+.focus-dur-label {
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--text-sub);
+  margin-right: 2px;
+}
+.focus-dur-chip {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-sub);
+  font-family: var(--font);
+  font-size: .79rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.focus-dur-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.focus-dur-chip[aria-pressed="true"] {
+  background: var(--exam-bg);
+  color: var(--exam-fg);
+  border-color: var(--accent);
+  font-weight: 700;
+}
+.focus-dur-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px 0 4px;
+  min-height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-pure);
+  font-size: .78rem;
+  font-weight: 600;
+  color: var(--text-sub);
+}
+.focus-dur-input {
+  width: 52px;
+  min-height: 26px !important;
+  height: 26px;
+  padding: 0 4px !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: .82rem !important;
+  font-weight: 700;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  box-shadow: none !important;
+}
+.focus-dur-input:focus {
+  outline: none;
+}
+
+/* 야간 집중 오버레이(#142A23) 내부 목표 시간 실시간 조절 바 */
+.focus-ov-goal-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin: 0 auto 20px;
+}
+.focus-ov-goal-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.focus-ov-goal-pill {
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 242, 229, .2);
+  background: rgba(255, 255, 255, .04);
+  color: #C9D8CF;
+  font-family: var(--font);
+  font-size: .78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.focus-ov-goal-pill:hover {
+  background: rgba(255, 255, 255, .12);
+  color: #F5F2E5;
+}
+.focus-ov-goal-pill[aria-pressed="true"] {
+  background: #C5D8B6;
+  color: #142A23;
+  border-color: #C5D8B6;
+  font-weight: 700;
+}
+.focus-ov-goal-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 242, 229, .18);
+  background: rgba(255, 255, 255, .05);
+}
+.focus-ov-goal-label,
+.focus-ov-goal-unit {
+  font-size: .76rem;
+  color: #A8BDB2;
+}
+.focus-ov-goal-input {
+  width: 56px;
+  min-height: 28px !important;
+  height: 28px;
+  padding: 2px 6px !important;
+  border-radius: 6px !important;
+  border: 1px solid rgba(245, 242, 229, .25) !important;
+  background: rgba(20, 42, 35, .8) !important;
+  color: #F5F2E5 !important;
+  font-family: var(--font);
+  font-size: .84rem !important;
+  font-weight: 700;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 767px) {
+  .focus-dur-chip, .focus-dur-custom {
+    min-height: 36px;
+  }
+  .focus-ov-goal-pill {
+    min-height: 36px;
+    padding: 0 11px;
+  }
+}
