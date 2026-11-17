@@ -4,7 +4,7 @@
    - 동일 출처(same-origin) GET 요청은 Network-First with Cache Fallback 전략 사용
    - Firebase, Google APIs, EXAONE API 등 외부 통신 및 /api/exaone은 바이패스
    ========================================================================= */
-const CACHE_NAME = 'nongyeol-app-v3';
+const CACHE_NAME = 'nongyeol-app-v4';
 const CORE_ASSETS = [
   './',
   './index.html',
@@ -14,7 +14,7 @@ const CORE_ASSETS = [
   './css/app-devices.css?v=3',
   './js/exaone-widget.js?v=4',
   './js/app.bundle.js?v=f4c8d912',
-  './js/app-native.js?v=2',
+  './js/app-native.js?v=3',
   './js/firebase-config.js',
   './js/drive-config.js',
   './assets/icon-192.png',

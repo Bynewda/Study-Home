@@ -36,6 +36,7 @@
      --------------------------------------------------------------------- */
   function isCapacitorApp() {
     try {
+      if (/NONGYEOLApp/i.test(navigator.userAgent || '')) return true;
       return !!(window.Capacitor && (
         (typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform()) ||
         (window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp)
@@ -164,17 +165,41 @@
   }
 
   /* ---------------------------------------------------------------------
-     3. PWA Service Worker 등록 & 설치 프롬프트 관리
+     3. PWA / APK 실시간 자동 업데이트(OTA) & Service Worker 등록
      --------------------------------------------------------------------- */
   let deferredInstallPrompt = null;
+  let swRegistration = null;
+  let lastUpdateCheckAt = 0;
+
+  function canSafeAutoReload() {
+    if (document.querySelector('.modal-backdrop')) return false;
+    const focusOv = document.getElementById('focus-overlay');
+    if (focusOv && !focusOv.classList.contains('hidden')) return false;
+    // 작성 중인 textarea/input에 포커스가 있을 때는 방해하지 않음
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && ae.type !== 'button' && ae.type !== 'checkbox'))) return false;
+    return true;
+  }
 
   function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
     if (!/^https?:$/i.test(location.protocol)) return;
-    if (isCapacitorApp()) return; // 네이티브 APK는 로컬 패키지 에셋을 직접 사용
+    // Live URL(bynewda.github.io)로 실행되는 APK 및 PWA 모두에서 SW 자동 업데이트 활성화
+    if (isCapacitorApp() && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) return;
+
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloadingForUpdate = false;
+
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!hadController || reloadingForUpdate) return;
+      if (canSafeAutoReload()) {
+        reloadingForUpdate = true;
+        location.reload();
+      }
+    });
 
     navigator.serviceWorker.register('./sw.js', { scope: './' }).then(function (reg) {
-      // 새 버전 감지 시 즉시 업데이트 활성화
+      swRegistration = reg;
       if (reg.waiting) {
         reg.waiting.postMessage({ type: 'SKIP_WAITING' });
       }
@@ -187,7 +212,35 @@
           }
         });
       });
+      // 앱 실행 직후 최신 버전 확인
+      lastUpdateCheckAt = Date.now();
+      reg.update().catch(function () {});
     }).catch(function () {});
+
+    // 백그라운드에서 앱을 다시 열 때마다 자동 업데이트 확인 (최소 60초 간격)
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible' || !swRegistration) return;
+      if (Date.now() - lastUpdateCheckAt < 60000) return;
+      lastUpdateCheckAt = Date.now();
+      swRegistration.update().catch(function () {});
+    });
+  }
+
+  async function checkAndApplyAppUpdate() {
+    try {
+      if ('serviceWorker' in navigator) {
+        const reg = swRegistration || await navigator.serviceWorker.getRegistration('./');
+        if (reg) {
+          await reg.update().catch(function () {});
+          if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      }
+    } catch (e) {}
+    location.reload();
   }
 
   window.addEventListener('beforeinstallprompt', function (e) {
@@ -522,9 +575,9 @@
     closeAppInstallModal();
     const p = detectDeviceProfile();
     const statusText = p.isCapacitor
-      ? '현재 Android 네이티브 APK 앱으로 실행 중입니다 (CORS 없는 EXAONE 직접 호출 지원).'
+      ? '현재 Android 네이티브 APK로 실행 중이며, 앱을 열 때마다 최신 웹 업데이트가 자동(OTA) 적용됩니다.'
       : p.isStandalone
-        ? '현재 독립 앱(PWA) 창으로 실행 중입니다.'
+        ? '현재 독립 앱(PWA) 창으로 실행 중이며, 최신 업데이트가 자동 적용됩니다.'
         : '현재 웹 브라우저에서 열려 있습니다. 아래 버튼으로 각 기기에서 앱처럼 설치할 수 있습니다.';
 
     const bd = document.createElement('div');
@@ -576,7 +629,8 @@
       + '    </p>'
       + '    <div class="app-install-actions">'
       + (canPwaPrompt ? '<button type="button" class="btn btn-primary" id="app-inst-pwa-btn">✨ 지금 이 기기에 앱 바로 설치 (PWA)</button>' : '')
-      + '<a class="btn ' + (canPwaPrompt ? '' : 'btn-primary') + '" href="' + APK_DOWNLOAD_URL + '" target="_blank" rel="noopener noreferrer">📦 Android APK 다운로드 (.apk)</a>'
+      + '<button type="button" class="btn btn-primary" id="app-inst-ota-btn">🔄 최신 업데이트 즉시 적용</button>'
+      + '<a class="btn ' + (canPwaPrompt ? '' : '') + '" href="' + APK_DOWNLOAD_URL + '" target="_blank" rel="noopener noreferrer">📦 Android APK 다운로드 (.apk)</a>'
       + '<a class="btn" href="' + APK_RELEASES_URL + '" target="_blank" rel="noopener noreferrer">빌드 버전 목록 ↗</a>'
       + '    </div>'
       + '  </div>'
@@ -590,6 +644,14 @@
 
     modal.querySelector('#app-inst-close').addEventListener('click', closeAppInstallModal);
     modal.querySelector('#app-inst-ok').addEventListener('click', closeAppInstallModal);
+    const otaBtn = modal.querySelector('#app-inst-ota-btn');
+    if (otaBtn) {
+      otaBtn.addEventListener('click', function () {
+        otaBtn.disabled = true;
+        otaBtn.textContent = '업데이트 확인 중…';
+        checkAndApplyAppUpdate();
+      });
+    }
     const pwaBtn = modal.querySelector('#app-inst-pwa-btn');
     if (pwaBtn) {
       pwaBtn.addEventListener('click', async function () {
@@ -744,6 +806,7 @@
     openBottomSheet: openBottomSheet,
     closeBottomSheet: closeBottomSheet,
     installPWA: triggerPwaInstall,
+    checkUpdate: checkAndApplyAppUpdate,
     toggleTabletRail: toggleTabletRail,
     apkUrl: APK_DOWNLOAD_URL,
   };

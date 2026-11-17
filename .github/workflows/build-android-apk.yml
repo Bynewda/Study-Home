@@ -100,6 +100,7 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         if (this.bridge != null && this.bridge.getWebView() != null) {
             WebSettings ws = this.bridge.getWebView().getSettings();
+            ws.setDomStorageEnabled(true);
             String ua = ws.getUserAgentString();
             if (ua != null) {
                 ws.setUserAgentString(ua.replace("; wv)", ")").replace("; wv;", ";"));

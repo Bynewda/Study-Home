@@ -3,7 +3,14 @@
   "appName": "논결 NONGYEOL",
   "webDir": "www",
   "server": {
-    "androidScheme": "https"
+    "url": "https://bynewda.github.io/Study-Home/",
+    "cleartext": false,
+    "allowNavigation": [
+      "bynewda.github.io",
+      "*.google.com",
+      "*.googleapis.com",
+      "*.firebaseapp.com"
+    ]
   },
   "android": {
     "allowMixedContent": false,
