@@ -11,6 +11,9 @@
 (function () {
   'use strict';
 
+  const APP_BUILD_VERSION = '2026.11.17-v5';
+  const LIVE_APP_URL = 'https://bynewda.github.io/Study-Home/';
+  const BUILD_VER_KEY = 'nongyeol:build-version';
   const TIMER_KEY = 'patent-study-home:active-session';
   const RAIL_PREF_KEY = 'nongyeol:tablet-rail';
   const APK_DOWNLOAD_URL = 'https://github.com/Bynewda/Study-Home/releases/latest/download/NONGYEOL-Android.apk';
@@ -216,14 +219,51 @@
       lastUpdateCheckAt = Date.now();
       reg.update().catch(function () {});
     }).catch(function () {});
+  }
 
-    // 백그라운드에서 앱을 다시 열 때마다 자동 업데이트 확인 (최소 60초 간격)
-    document.addEventListener('visibilitychange', function () {
-      if (document.visibilityState !== 'visible' || !swRegistration) return;
-      if (Date.now() - lastUpdateCheckAt < 60000) return;
-      lastUpdateCheckAt = Date.now();
-      swRegistration.update().catch(function () {});
-    });
+  async function autoSyncLatestVersion() {
+    if (!/^https?:$/i.test(location.protocol)) return;
+    if (navigator.onLine === false) return;
+
+    // 1) 로컬 패키지(localhost) APK가 온라인 상태면 즉시 라이브 URL로 전환
+    if (isCapacitorApp() && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
+      try {
+        const probe = await fetch(LIVE_APP_URL + 'version.json?t=' + Date.now(), { cache: 'no-store' });
+        if (probe && probe.ok) {
+          location.replace(LIVE_APP_URL + (location.hash || ''));
+          return;
+        }
+      } catch (e) {}
+      return;
+    }
+
+    // 2) version.json 기준 무중단 원스텝 자동 업데이트
+    try {
+      const res = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!res || !res.ok) return;
+      const data = await res.json();
+      const remoteVer = data && typeof data.version === 'string' ? data.version.trim() : '';
+      if (!remoteVer) return;
+
+      let prevVer = '';
+      try { prevVer = localStorage.getItem(BUILD_VER_KEY) || ''; } catch (e) {}
+      if (remoteVer !== APP_BUILD_VERSION || (prevVer && prevVer !== remoteVer)) {
+        try {
+          if (sessionStorage.getItem('nongyeol:ota-attempted') === remoteVer) return;
+          sessionStorage.setItem('nongyeol:ota-attempted', remoteVer);
+          localStorage.setItem(BUILD_VER_KEY, remoteVer);
+        } catch (e) {}
+
+        if (canSafeAutoReload()) {
+          await checkAndApplyAppUpdate();
+        }
+      } else {
+        try {
+          localStorage.setItem(BUILD_VER_KEY, remoteVer);
+          sessionStorage.removeItem('nongyeol:ota-attempted');
+        } catch (e) {}
+      }
+    } catch (e) {}
   }
 
   async function checkAndApplyAppUpdate() {
@@ -764,6 +804,7 @@
   function initNativeEnhancements() {
     applyDeviceAttributes();
     registerServiceWorker();
+    autoSyncLatestVersion();
     injectTopbarTools();
     enhanceSidebarTooltips();
     upgradeMobileTabbar();
@@ -785,6 +826,11 @@
     window.addEventListener('timer:changed', syncTimerPersistence);
     document.addEventListener('visibilitychange', function () {
       syncTimerPersistence();
+      if (document.visibilityState === 'visible' && Date.now() - lastUpdateCheckAt >= 60000) {
+        lastUpdateCheckAt = Date.now();
+        if (swRegistration) swRegistration.update().catch(function () {});
+        autoSyncLatestVersion();
+      }
     });
     window.addEventListener('pagehide', syncTimerPersistence);
     // pause/resume 상태 및 경과 시간 동기화를 위해 가볍게 주기 확인
