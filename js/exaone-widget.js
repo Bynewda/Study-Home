@@ -107,7 +107,72 @@
     return !!(document && document.documentElement && document.documentElement.getAttribute('data-study-home-lu-ext') === '1' && !hasExaoneExtBridge());
   }
   function isLocalServerOrigin() {
-    return typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1') && /^https?:$/i.test(location.protocol);
+    return typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1') && /^https?:$/i.test(location.protocol) && !window.Capacitor;
+  }
+  function hasCapacitorBridge() {
+    try {
+      return !!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp &&
+        typeof window.Capacitor.Plugins.CapacitorHttp.request === 'function');
+    } catch (e) {
+      return false;
+    }
+  }
+  function hasCloudRelayReady() {
+    return !!(window.StudyCloud && window.StudyCloud.enabled && window.StudyCloud.user && typeof window.StudyCloud.requestExaoneViaCloud === 'function');
+  }
+  // Android Capacitor APK 네이티브 HTTP 호출 (CORS 제한 없음)
+  function fetchViaCapacitor(endpoint, apiKey, payload, signal) {
+    return new Promise(function (resolve, reject) {
+      if (signal && signal.aborted) {
+        const abortErr = new Error('Aborted');
+        abortErr.name = 'AbortError';
+        reject(abortErr);
+        return;
+      }
+      let settled = false;
+      function onAbort() {
+        if (settled) return;
+        settled = true;
+        const abortErr = new Error('Aborted');
+        abortErr.name = 'AbortError';
+        reject(abortErr);
+      }
+      if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
+      window.Capacitor.Plugins.CapacitorHttp.request({
+        url: endpoint,
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + apiKey,
+          'Content-Type': 'application/json',
+        },
+        data: payload,
+        connectTimeout: 15000,
+        readTimeout: 85000,
+      }).then(function (resp) {
+        if (settled) return;
+        settled = true;
+        if (signal) signal.removeEventListener('abort', onAbort);
+        const status = Number(resp && resp.status) || 0;
+        const rawData = resp ? resp.data : '';
+        const bodyText = typeof rawData === 'string' ? rawData : JSON.stringify(rawData || {});
+        resolve({
+          ok: status >= 200 && status < 300,
+          status: status,
+          text: function () { return Promise.resolve(bodyText); },
+          json: function () {
+            if (typeof rawData === 'object' && rawData !== null) return Promise.resolve(rawData);
+            try { return Promise.resolve(JSON.parse(bodyText)); }
+            catch (err) { return Promise.reject(err); }
+          },
+        });
+      }).catch(function (err) {
+        if (settled) return;
+        settled = true;
+        if (signal) signal.removeEventListener('abort', onAbort);
+        reject(new Error((err && err.message) || 'Android 네이티브 네트워크 오류'));
+      });
+    });
   }
   // 확장 앱(bridge.js -> background.js)을 통한 CORS 우회 호출
   function fetchViaExtension(endpoint, apiKey, payload, signal) {
@@ -255,9 +320,23 @@
   function renderKeyBadge() {
     if (!view) return;
     const ok = getKey().length > 5;
+    const cap = hasCapacitorBridge();
     const ext = hasExaoneExtBridge();
+    const localSrv = isLocalServerOrigin();
     view.keyBadge.className = 'exw-key-badge ' + (ok ? 'ok' : 'missing');
-    view.keyBadge.textContent = ok ? (ext ? 'API 연결됨 · 확장앱 활성' : 'API 연결 준비됨') : '키 미설정';
+    if (!ok) {
+      view.keyBadge.textContent = '키 미설정';
+    } else if (cap) {
+      view.keyBadge.textContent = 'API 연결됨 · 네이티브 앱';
+    } else if (ext) {
+      view.keyBadge.textContent = 'API 연결됨 · 확장앱 활성';
+    } else if (localSrv) {
+      view.keyBadge.textContent = 'API 연결됨 · 로컬 서버';
+    } else if (hasCloudRelayReady()) {
+      view.keyBadge.textContent = 'API 연결됨 · 클라우드 브리지';
+    } else {
+      view.keyBadge.textContent = 'API 연결 준비됨';
+    }
     view.keyBadge.title = ok ? 'API Key 설정 열기' : 'API Key를 입력해 주세요';
   }
 
@@ -307,16 +386,24 @@
         }
       }
       if (m.needExtGuide) {
-        actionBtns.push(
-          h('button', {
-            type: 'button', class: 'btn btn-sm',
-            onclick: function () { copyText('whale://extensions'); toast('whale://extensions 주소를 복사했습니다. 주소창에 붙여넣어 이동하세요.'); },
-          }, '웨일 확장앱 주소 복사'),
-          h('button', {
-            type: 'button', class: 'btn btn-sm',
-            onclick: function () { copyText('chrome://extensions'); toast('chrome://extensions 주소를 복사했습니다. 주소창에 붙여넣어 이동하세요.'); },
-          }, '크롬 확장앱 주소 복사')
-        );
+        const isMobileDev = !!(window.NongyeolApp && window.NongyeolApp.detectDevice && window.NongyeolApp.detectDevice().kind !== 'desktop');
+        if (isMobileDev && window.NongyeolApp && typeof window.NongyeolApp.openInstallModal === 'function') {
+          actionBtns.push(h('button', {
+            type: 'button', class: 'btn btn-primary btn-sm',
+            onclick: function () { window.NongyeolApp.openInstallModal(); },
+          }, '📦 Android APK 설치 안내'));
+        } else {
+          actionBtns.push(
+            h('button', {
+              type: 'button', class: 'btn btn-sm',
+              onclick: function () { copyText('whale://extensions'); toast('whale://extensions 주소를 복사했습니다. 주소창에 붙여넣어 이동하세요.'); },
+            }, '웨일 확장앱 주소 복사'),
+            h('button', {
+              type: 'button', class: 'btn btn-sm',
+              onclick: function () { copyText('chrome://extensions'); toast('chrome://extensions 주소를 복사했습니다. 주소창에 붙여넣어 이동하세요.'); },
+            }, '크롬 확장앱 주소 복사')
+          );
+        }
       }
       if (actionBtns.length > 0) {
         errChildren.push(h('div', { class: 'exw-err-actions', style: 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px' }, actionBtns));
@@ -443,7 +530,7 @@
         h('strong', {}, [icon('key', 14), 'EXAONE API Key 보안 설정']),
         h('a', { href: 'https://docs.exaone.ai', target: '_blank', rel: 'noopener noreferrer', text: '키 발급 안내 ↗' }),
       ]),
-      h('p', { class: 'exw-help', text: '입력한 키는 이 기기의 브라우저(localStorage)에만 저장됩니다. 클라우드 동기화나 백업 파일에는 포함되지 않으므로 PC·휴대폰·태블릿에서 각각 한 번씩 등록해 주세요.' }),
+      h('p', { class: 'exw-help', text: '입력한 키는 이 기기에 저장되며, Google 로그인 상태에서는 PC · 갤럭시 S25 엣지 · 요가탭 플러스 13 계정으로 자동 동기화됩니다.' }),
       h('div', { class: 'exw-key-row' }, [
         keyInput,
         h('button', { type: 'button', class: 'exw-mini-btn', title: '키 보기/숨기기', 'aria-label': '키 보기/숨기기', onclick: function () { keyInput.type = keyInput.type === 'password' ? 'text' : 'password'; } }, [icon('eye', 14)]),
@@ -451,11 +538,13 @@
           const k = keyInput.value.trim();
           if (!k) { toast('API Key를 입력해 주세요.'); keyInput.focus(); return; }
           try { localStorage.setItem(STORAGE_KEY_API, k); } catch (e) {}
+          if (window.StudyCloud && typeof window.StudyCloud.syncExaoneKey === 'function') window.StudyCloud.syncExaoneKey(k);
           renderKeyBadge(); openSettings(false); renderMessages();
-          toast('API Key를 이 브라우저에 저장했습니다.');
+          toast('API Key를 저장했습니다. (로그인된 다른 기기에도 동기화됨)');
         } }, '저장'),
         h('button', { type: 'button', class: 'btn btn-sm', onclick: function () {
           try { localStorage.removeItem(STORAGE_KEY_API); } catch (e) {}
+          if (window.StudyCloud && typeof window.StudyCloud.syncExaoneKey === 'function') window.StudyCloud.syncExaoneKey('');
           keyInput.value = ''; renderKeyBadge(); renderMessages();
           toast('저장된 API Key를 삭제했습니다.');
         } }, '삭제'),
@@ -616,6 +705,41 @@
     const RETRY_DELAYS_MS = [2500, 4000, 6000, 8000]; // 최대 4회 자동 재시도 (총 5회 호출)
     const maxRetries = RETRY_DELAYS_MS.length;
 
+    async function executeTransportCall() {
+      if (hasCapacitorBridge()) {
+        // 1순위: Android 네이티브 APK (CapacitorHttp — CORS 완전 우회, PC 없이 단독 작동)
+        return fetchViaCapacitor(targetEndpoint, apiKey, reqPayload, controller.signal);
+      }
+      if (hasExaoneExtBridge()) {
+        // 2순위: 웨일/크롬 확장 앱(learnus-sync-extension v1.2.0+) 백그라운드 브리지 경유
+        return fetchViaExtension(targetEndpoint, apiKey, reqPayload, controller.signal);
+      }
+      if (isLocalServerOrigin() && targetEndpoint === DEFAULT_ENDPOINT) {
+        // 3순위: 로컬 서버(server.ps1) 실행 중일 때 /api/exaone 프록시 경유
+        return fetch('/api/exaone', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqPayload),
+          signal: controller.signal,
+        });
+      }
+      // 4순위: 직접 호출 후 CORS 차단(TypeError) 시 로그인된 PC 클라우드 릴레이 자동 시도
+      try {
+        return await fetch(targetEndpoint, {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqPayload),
+          signal: controller.signal,
+        });
+      } catch (directErr) {
+        if (directErr && directErr.name === 'TypeError' && hasCloudRelayReady()) {
+          setLoadingStatus('로그인된 PC 브리지로 연결 중…');
+          return window.StudyCloud.requestExaoneViaCloud(targetEndpoint, apiKey, reqPayload, controller.signal);
+        }
+        throw directErr;
+      }
+    }
+
     try {
       let res;
       let lastRaw = '';
@@ -623,26 +747,7 @@
         if (attempt > 0) {
           setLoadingStatus('K-EXAONE 2.5 자동 재시도 중… (' + attempt + '/' + maxRetries + '회)');
         }
-        if (hasExaoneExtBridge()) {
-          // 1순위: 웨일/크롬 확장 앱(learnus-sync-extension v1.2.0+) 백그라운드 브리지 경유 (CORS 제한 없음)
-          res = await fetchViaExtension(targetEndpoint, apiKey, reqPayload, controller.signal);
-        } else if (isLocalServerOrigin() && targetEndpoint === DEFAULT_ENDPOINT) {
-          // 2순위: 로컬 서버(server.ps1) 실행 중일 때 /api/exaone 프록시 경유
-          res = await fetch('/api/exaone', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-            body: JSON.stringify(reqPayload),
-            signal: controller.signal,
-          });
-        } else {
-          // 3순위: 직접 호출 (프록시 Endpoint 설정 시 또는 확장 앱 미감지 시)
-          res = await fetch(targetEndpoint, {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + apiKey, 'Content-Type': 'application/json' },
-            body: JSON.stringify(reqPayload),
-            signal: controller.signal,
-          });
-        }
+        res = await executeTransportCall();
         if (res.ok) break;
 
         lastRaw = await res.text().catch(function () { return ''; });
@@ -686,7 +791,13 @@
         else { text = '사용자가 응답 생성을 중지했습니다.'; title = '요청 중지'; }
       } else if (err && err.name === 'TypeError') {
         needExtGuide = true;
-        if (hasLearnUsExtOnly()) {
+        const isMobileDev = !!(window.NongyeolApp && window.NongyeolApp.detectDevice && window.NongyeolApp.detectDevice().kind !== 'desktop');
+        if (isMobileDev) {
+          title = '안드로이드 앱(APK) 또는 PC 브리지 필요';
+          text = '모바일/태블릿 웹 브라우저는 CORS 보안 정책 때문에 EXAONE 직접 호출이 차단되며, 현재 열려 있는 PC 브리지도 응답하지 않습니다.\n'
+            + '• 추천 해결: 아래 [📦 Android APK 설치 안내]를 눌러 정식 APK 앱으로 설치하면 PC가 꺼져 있어도 갤럭시·요가탭에서 단독으로 바로 작동합니다!\n'
+            + '• 임시 해결: PC 브라우저에서 논결 홈페이지(확장앱 활성)를 열어두고 같은 Google 계정으로 로그인하면 즉시 연동됩니다.';
+        } else if (hasLearnUsExtOnly()) {
           title = '확장 앱 새로고침(업데이트) 필요';
           text = '확장 앱에 K-EXAONE 2.5 연결 기능(v1.2.0)이 추가되었습니다! 아래 순서로 1회만 새로고침해 주세요.\n'
             + '1) 아래 버튼으로 확장 앱 관리 주소(whale://extensions 또는 chrome://extensions)를 복사해 주소창에 붙여넣고 이동합니다.\n'
@@ -823,6 +934,12 @@
       renderKeyBadge();
     }
   });
+  window.addEventListener('exaone:key-synced', function () {
+    if (view && view.keyInput) view.keyInput.value = getKey();
+    renderKeyBadge();
+    renderMessages();
+  });
+  window.addEventListener('studycloud:ready', renderKeyBadge);
   window.ExaoneWidget = {
     mount: mount,
     setDraft: setDraft,

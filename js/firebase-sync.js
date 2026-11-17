@@ -34,6 +34,12 @@ const DOC_SIZE_WARN = 900 * 1024;
 
 // 카카오톡·네이버·인스타그램 등 앱 내부 브라우저는 구글이 로그인을 차단(disallowed_useragent)
 function detectInAppBrowser() {
+  // Capacitor 네이티브 앱 또는 홈 화면에 추가된 독립 PWA 창에서는 허용
+  try {
+    if (window.Capacitor) return null;
+    if (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) return null;
+    if (window.navigator && window.navigator.standalone === true) return null;
+  } catch (e) {}
   const ua = (navigator.userAgent || "").toLowerCase();
   if (/kakaotalk/.test(ua)) return "카카오톡";
   if (/naver\(inapp|naver\/|whale\/.*inapp/.test(ua) && /mobile/.test(ua)) return "네이버 앱";
@@ -46,9 +52,12 @@ function detectInAppBrowser() {
 }
 function isMobileLike() {
   const ua = navigator.userAgent || "";
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua) ||
+  return /Android|iPhone|iPad|iPod|Mobile|NONGYEOLApp/i.test(ua) ||
     (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1); // iPadOS
 }
+
+const EXAONE_KEY_STORAGE = "nongyeol:exaone:api-key";
+const EXAONE_KEY_TS_STORAGE = "nongyeol:exaone:api-key-ts";
 
 const StudyCloud = {
   enabled: false,
@@ -62,6 +71,8 @@ const StudyCloud = {
   _pushTimer: null,
   _applyingRemote: false,
   _lastAppliedPayload: null,  // 방금 반영/업로드한 payload 문자열 (에코 무시용)
+  _handledRelayIds: {},       // PC 클라우드 브리지에서 이미 처리한 EXAONE 요청 ID
+  _relayWaiters: {},          // 모바일/태블릿에서 PC 응답을 기다리는 Promise 콜백
   _onState: null,      // 번들이 등록하는 상태 변경 콜백
   _getLocal: null,     // 번들이 등록: 현재 로컬 데이터 반환
   _setLocal: null,     // 번들이 등록: 클라우드 데이터를 로컬에 반영
@@ -207,8 +218,223 @@ const StudyCloud = {
     }
     this._lastAppliedPayload = payload;   // 내가 올린 것 기록 → 에코 무시
     this._setStatus("syncing");
-    await setDoc(this._docRef(this.user.uid), { payload: payload, updatedAt: Date.now() });
+    await setDoc(this._docRef(this.user.uid), { payload: payload, updatedAt: Date.now() }, { merge: true });
     this._setStatus(navigator.onLine === false ? "offline" : "synced");
+  },
+
+  // K-EXAONE 2.5 API Key 기기 간 동기화 (PC <-> 갤럭시 S25 엣지 <-> 요가탭 플러스 13)
+  async syncExaoneKey(apiKey) {
+    const ts = Date.now();
+    try { localStorage.setItem(EXAONE_KEY_TS_STORAGE, String(ts)); } catch (e) {}
+    if (!this.enabled || !this.user) return;
+    try {
+      await setDoc(this._docRef(this.user.uid), {
+        exaoneApiKey: apiKey || "",
+        exaoneApiKeyUpdatedAt: ts,
+      }, { merge: true });
+    } catch (e) {
+      console.warn("[StudyCloud] EXAONE 키 동기화 실패", e);
+    }
+  },
+
+  _canRelayExaoneLocally() {
+    try {
+      if (document.documentElement && document.documentElement.getAttribute("data-study-home-exaone-ext") === "1") return true;
+      const h = location.hostname || "";
+      return (h === "localhost" || h === "127.0.0.1") && /^https?:$/i.test(location.protocol) && !window.Capacitor;
+    } catch (e) {
+      return false;
+    }
+  },
+
+  _forwardExaoneLocally(req) {
+    return new Promise((resolve) => {
+      if (document.documentElement && document.documentElement.getAttribute("data-study-home-exaone-ext") === "1") {
+        let done = false;
+        const cleanup = () => window.removeEventListener("message", onMsg);
+        const timer = setTimeout(() => {
+          if (done) return;
+          done = true;
+          cleanup();
+          resolve({ transportOk: false, error: "PC 확장 앱 응답 시간 초과" });
+        }, 75000);
+        function onMsg(e) {
+          if (e.source !== window || !e.data || e.data.type !== "STUDY_HOME_EXAONE_RESULT" || e.data.reqId !== req.reqId) return;
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          cleanup();
+          resolve({
+            transportOk: !!e.data.transportOk,
+            httpOk: !!e.data.httpOk,
+            status: Number(e.data.status) || 0,
+            bodyText: typeof e.data.bodyText === "string" ? e.data.bodyText : "",
+            error: e.data.error || "",
+          });
+        }
+        window.addEventListener("message", onMsg);
+        window.postMessage({
+          type: "STUDY_HOME_EXAONE_FETCH",
+          reqId: req.reqId,
+          endpoint: req.endpoint,
+          apiKey: req.apiKey,
+          payload: req.payload,
+        }, window.location.origin);
+        return;
+      }
+
+      fetch("/api/exaone", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + req.apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify(req.payload),
+      }).then(async (r) => {
+        const bodyText = await r.text().catch(() => "");
+        resolve({ transportOk: true, httpOk: r.ok, status: r.status, bodyText: bodyText });
+      }).catch((err) => {
+        resolve({ transportOk: false, error: (err && err.message) || "로컬 서버 오류" });
+      });
+    });
+  },
+
+  _handleExaoneDocFields(docData) {
+    if (!docData || typeof docData !== "object") return;
+
+    // 1) EXAONE API Key 자동 수신 / 송신
+    try {
+      const remoteKey = typeof docData.exaoneApiKey === "string" ? docData.exaoneApiKey.trim() : "";
+      const remoteTs = Number(docData.exaoneApiKeyUpdatedAt) || 0;
+      const localKey = (localStorage.getItem(EXAONE_KEY_STORAGE) || "").trim();
+      const localTs = Number(localStorage.getItem(EXAONE_KEY_TS_STORAGE) || "0") || 0;
+
+      if (remoteKey && (!localKey || remoteTs > localTs + 1000)) {
+        localStorage.setItem(EXAONE_KEY_STORAGE, remoteKey);
+        localStorage.setItem(EXAONE_KEY_TS_STORAGE, String(remoteTs || Date.now()));
+        window.dispatchEvent(new CustomEvent("exaone:key-synced"));
+      } else if (localKey && !remoteKey && remoteTs === 0) {
+        this.syncExaoneKey(localKey);
+      }
+    } catch (e) {}
+
+    // 2) 모바일/태블릿 대기 중 PC 응답(Ack/Res) 수신
+    const ack = docData.exaoneRelayAck;
+    if (ack && ack.reqId && this._relayWaiters[ack.reqId] && typeof this._relayWaiters[ack.reqId].onAck === "function") {
+      this._relayWaiters[ack.reqId].onAck();
+    }
+    const res = docData.exaoneRelayRes;
+    if (res && res.reqId && this._relayWaiters[res.reqId]) {
+      const w = this._relayWaiters[res.reqId];
+      delete this._relayWaiters[res.reqId];
+      w.resolve(res);
+    }
+
+    // 3) PC 확장 앱이 켜져 있을 때 모바일/태블릿의 릴레이 요청 대리 처리
+    const req = docData.exaoneRelayReq;
+    if (req && req.reqId && this._canRelayExaoneLocally() && !this._handledRelayIds[req.reqId]) {
+      const age = Date.now() - (Number(req.createdAt) || 0);
+      if (age >= -5000 && age < 45000 && !(res && res.reqId === req.reqId)) {
+        this._handledRelayIds[req.reqId] = true;
+        const ref = this._docRef(this.user.uid);
+        setDoc(ref, { exaoneRelayAck: { reqId: req.reqId, at: Date.now() } }, { merge: true }).catch(() => {});
+        this._forwardExaoneLocally(req).then((out) => {
+          return setDoc(ref, {
+            exaoneRelayReq: null,
+            exaoneRelayRes: {
+              reqId: req.reqId,
+              transportOk: !!out.transportOk,
+              httpOk: !!out.httpOk,
+              status: Number(out.status) || 0,
+              bodyText: out.bodyText || "",
+              error: out.error || "",
+              answeredAt: Date.now(),
+            },
+          }, { merge: true });
+        }).catch(() => {});
+      }
+    }
+  },
+
+  // 모바일/태블릿 PWA 환경에서 로그인된 PC 브리지를 통해 EXAONE 우회 호출
+  requestExaoneViaCloud(endpoint, apiKey, payload, signal) {
+    if (!this.enabled || !this.user) {
+      return Promise.reject(new TypeError("CLOUD_NOT_LOGGED_IN"));
+    }
+    const reqId = "crelay-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8);
+    const ref = this._docRef(this.user.uid);
+
+    return new Promise((resolve, reject) => {
+      let acked = false;
+      let done = false;
+      const cleanup = () => {
+        clearTimeout(ackTimer);
+        clearTimeout(totalTimer);
+        if (signal) signal.removeEventListener("abort", onAbort);
+        delete this._relayWaiters[reqId];
+      };
+      const failWithType = (msg) => {
+        if (done) return;
+        done = true;
+        cleanup();
+        const err = new TypeError(msg);
+        reject(err);
+      };
+      const onAbort = () => {
+        if (done) return;
+        done = true;
+        cleanup();
+        const abortErr = new Error("Aborted");
+        abortErr.name = "AbortError";
+        reject(abortErr);
+      };
+
+      // 4.5초 이내에 PC가 요청을 수락(Ack)하지 않으면 PC가 꺼진 상태로 보고 즉시 종료
+      const ackTimer = setTimeout(() => {
+        if (!acked) failWithType("PC_RELAY_TIMEOUT");
+      }, 4500);
+
+      const totalTimer = setTimeout(() => {
+        failWithType("PC_RELAY_RESPONSE_TIMEOUT");
+      }, 78000);
+
+      this._relayWaiters[reqId] = {
+        onAck: () => { acked = true; },
+        resolve: (res) => {
+          if (done) return;
+          done = true;
+          cleanup();
+          if (!res.transportOk) {
+            reject(new TypeError(res.error || "PC_RELAY_TRANSPORT_ERROR"));
+            return;
+          }
+          const bodyText = typeof res.bodyText === "string" ? res.bodyText : "";
+          resolve({
+            ok: !!res.httpOk,
+            status: Number(res.status) || 0,
+            text: () => Promise.resolve(bodyText),
+            json: () => {
+              try { return Promise.resolve(JSON.parse(bodyText)); }
+              catch (err) { return Promise.reject(err); }
+            },
+          });
+        },
+      };
+
+      if (signal) {
+        if (signal.aborted) { onAbort(); return; }
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+
+      setDoc(ref, {
+        exaoneRelayReq: {
+          reqId: reqId,
+          endpoint: endpoint,
+          apiKey: apiKey,
+          payload: payload,
+          createdAt: Date.now(),
+        },
+      }, { merge: true }).catch(() => {
+        failWithType("PC_RELAY_WRITE_FAILED");
+      });
+    });
   },
 
   async _startSync(uid) {
@@ -220,7 +446,10 @@ const StudyCloud = {
       const local = this._getLocal ? this._getLocal() : null;
       if (!snap.exists()) {
         if (local) await this._upload(local);
+        const lk = (localStorage.getItem(EXAONE_KEY_STORAGE) || "").trim();
+        if (lk) await this.syncExaoneKey(lk);
       } else {
+        this._handleExaoneDocFields(snap.data());
         const remote = this._parse(snap.data());
         const rt = remote && remote.updatedAt ? Date.parse(remote.updatedAt) : 0;
         const lt = local && local.updatedAt ? Date.parse(local.updatedAt) : 0;
@@ -241,6 +470,7 @@ const StudyCloud = {
     if (this._unsub) this._unsub();
     this._unsub = onSnapshot(ref, { includeMetadataChanges: false }, (snap) => {
       if (!snap.exists()) return;
+      this._handleExaoneDocFields(snap.data());
       const payloadStr = snap.data() && snap.data().payload;
       if (payloadStr && payloadStr === this._lastAppliedPayload) {
         if (!snap.metadata.hasPendingWrites) this._setStatus("synced");

@@ -1,0 +1,18 @@
+{
+  "name": "nongyeol-study-app",
+  "version": "1.2.0",
+  "description": "논결 NONGYEOL — 변리사 2차 수험 개인 학습 서재 (PWA + Android Capacitor 앱)",
+  "private": true,
+  "scripts": {
+    "prepare-www": "node -e \"const fs=require('fs'),path=require('path');fs.rmSync('www',{recursive:true,force:true});fs.mkdirSync('www',{recursive:true});for(const f of ['index.html','manifest.webmanifest','sw.js','.nojekyll']){if(fs.existsSync(f))fs.copyFileSync(f,path.join('www',f));}for(const d of ['css','js','assets']){if(fs.existsSync(d))fs.cpSync(d,path.join('www',d),{recursive:true});}\"",
+    "cap:sync": "npm run prepare-www && npx cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.2.0",
+    "@capacitor/app": "^7.0.1",
+    "@capacitor/core": "^7.2.0"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.2.0"
+  }
+}

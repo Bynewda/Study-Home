@@ -1,0 +1,452 @@
+/* =========================================================================
+   app-devices.css — 논결(NONGYEOL) 3대 기기 맞춤형 앱 레이아웃 & 네이티브 UI
+   1) Windows PC (PWA 데스크톱 앱 창 / 확장브리지)
+   2) 갤럭시 S25 엣지 (Android Phone: 5탭 하단바 + 바텀시트 + Safe Area + 햅틱)
+   3) 레노버 요가탭 플러스 13 Gen 2 (Android Tablet: 접이식 슬림 레일 + 2단 레이아웃 유지)
+   ========================================================================= */
+
+/* --- 1. 상단바 빠른 앱 도구 & 미니 타이머 --- */
+.app-topbar-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-left: auto;
+}
+
+.app-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 0 11px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: .8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .14s, border-color .14s, transform .1s;
+}
+.app-tool-btn:hover {
+  background: var(--surface-soft);
+  border-color: var(--border-strong);
+}
+.app-tool-btn:active { transform: scale(.97); }
+.app-tool-btn svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+.app-tool-btn.primary-soft {
+  background: var(--exam-bg);
+  color: var(--exam-fg);
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border));
+}
+.app-tool-btn.is-active {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+}
+
+.app-rail-toggle-btn { display: none; }
+
+.app-timer-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: var(--exam-bg);
+  color: var(--exam-fg);
+  font-family: var(--font);
+  font-size: .78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.app-timer-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: app-pulse 1.6s ease-in-out infinite;
+}
+@keyframes app-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(.85); }
+}
+
+/* --- 2. Standalone PWA / Capacitor 네이티브 앱 Safe Area 대응 --- */
+@media (display-mode: standalone) {
+  .topbar {
+    padding-top: max(10px, env(safe-area-inset-top, 10px));
+  }
+  .sidebar {
+    padding-top: max(var(--s6), env(safe-area-inset-top, var(--s6)));
+  }
+  .focus-overlay {
+    padding-top: max(18px, env(safe-area-inset-top, 18px));
+    padding-bottom: max(20px, env(safe-area-inset-bottom, 20px));
+  }
+}
+
+html.is-capacitor-app .topbar {
+  padding-top: max(12px, env(safe-area-inset-top, 12px));
+}
+html.is-capacitor-app .sidebar {
+  padding-top: max(var(--s6), env(safe-area-inset-top, var(--s6)));
+}
+
+/* 모바일/태블릿 가상 키보드가 올라왔을 때 하단 요소가 입력창을 가리지 않게 숨김 */
+body.keyboard-open .mobile-tabbar,
+body.keyboard-open .ai-widget-root {
+  display: none !important;
+}
+
+/* --- 3. 레노버 요가탭 플러스 13 Gen 2 (태블릿: 768px ~ 1199px) 최적화 --- */
+@media (min-width: 768px) and (max-width: 1199px) {
+  .app-rail-toggle-btn { display: inline-flex; }
+  .topbar .menu-toggle { display: none; }
+
+  .app {
+    grid-template-columns: 76px minmax(0, 1fr);
+    transition: grid-template-columns .18s ease;
+  }
+
+  .sidebar {
+    position: sticky;
+    top: 0;
+    left: auto;
+    bottom: auto;
+    height: 100vh;
+    width: 76px;
+    padding: 14px 8px;
+    transform: none !important;
+    box-shadow: none;
+    overflow-x: hidden;
+    z-index: 30;
+    transition: width .18s ease, padding .18s ease;
+  }
+
+  /* 접힌 슬림 레일 상태 (기본값) */
+  body:not(.tablet-rail-expanded) .brand-wrap {
+    padding: 2px 0 12px;
+    margin-bottom: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  body:not(.tablet-rail-expanded) .brand-lockup {
+    justify-content: center;
+  }
+  body:not(.tablet-rail-expanded) .brand-words,
+  body:not(.tablet-rail-expanded) .brand-context,
+  body:not(.tablet-rail-expanded) .nav-group-label,
+  body:not(.tablet-rail-expanded) #cloud-box .hint,
+  body:not(.tablet-rail-expanded) #cloud-box .row > div,
+  body:not(.tablet-rail-expanded) .save-status {
+    display: none;
+  }
+  body:not(.tablet-rail-expanded) .nav-sep {
+    margin: 6px 4px;
+  }
+  body:not(.tablet-rail-expanded) .nav-item {
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 3px;
+    padding: 7px 4px;
+    min-height: 48px;
+    font-size: .68rem;
+    line-height: 1.15;
+    text-align: center;
+    letter-spacing: -.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  body:not(.tablet-rail-expanded) .nav-item[aria-current="page"]::before {
+    top: 10px;
+    bottom: 10px;
+  }
+  body:not(.tablet-rail-expanded) .sidebar-footer {
+    align-items: stretch;
+  }
+  body:not(.tablet-rail-expanded) #cloud-box .btn-block {
+    font-size: .68rem;
+    padding: 6px 4px;
+    min-height: 38px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  body:not(.tablet-rail-expanded) #cloud-box .row {
+    justify-content: center;
+    padding: 4px 0 !important;
+  }
+
+  /* 펼친 전체 사이드바 상태 */
+  body.tablet-rail-expanded .app {
+    grid-template-columns: 248px minmax(0, 1fr);
+  }
+  body.tablet-rail-expanded .sidebar {
+    width: 248px;
+    padding: var(--s6) var(--s4) var(--s4);
+  }
+
+  /* 요가탭 플러스 13 가로 모드(960px~1199px): 2단 서재·대시보드 유지 */
+}
+
+@media (min-width: 960px) and (max-width: 1199px) {
+  .home-hero-grid {
+    grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr);
+  }
+  .grid-7to3 {
+    grid-template-columns: minmax(0, 1.75fr) minmax(270px, 1fr);
+  }
+  .notes-workspace {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+  .grid-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* 태블릿 및 대화면 터치 타깃 보강 (S-Pen / Lenovo Tab Pen + 손가락 터치) */
+@media (pointer: coarse) and (min-width: 768px) {
+  .btn, .pill, .nav-item {
+    min-height: 44px;
+  }
+  .content {
+    padding-bottom: 56px;
+  }
+}
+
+/* --- 4. 갤럭시 S25 엣지 (모바일: <= 767px) 5탭 하단바 & 바텀시트 --- */
+@media (max-width: 767px) {
+  .topbar-inner {
+    gap: 8px;
+  }
+  .app-topbar-tools .app-tool-label {
+    display: none;
+  }
+  .app-tool-btn {
+    min-height: 36px;
+    padding: 0 9px;
+  }
+
+  .mobile-tabbar.has-5-tabs {
+    grid-template-columns: repeat(5, 1fr);
+    padding: 4px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -4px 18px rgba(20, 35, 28, .06);
+  }
+  .mobile-tabbar.has-5-tabs .mob-tab {
+    position: relative;
+    min-height: 52px;
+    font-size: .73rem;
+    gap: 2px;
+    border-radius: 10px;
+    transition: background .12s, color .12s;
+  }
+  .mobile-tabbar.has-5-tabs .mob-tab:active {
+    background: var(--surface-soft);
+  }
+  .mobile-tabbar.has-5-tabs .mob-tab[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    top: 3px;
+    width: 24px;
+    height: 3px;
+    border-radius: 3px;
+    background: var(--accent);
+  }
+
+  /* 갤럭시 S25 엣지 등 긴 화면에서 본문과 플로팅 AI 버튼 간격 보정 */
+  .ai-widget-root {
+    right: 12px;
+    bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  }
+  .toast-wrap {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* --- 5. 모바일 네이티브 바텀 시트 (AI · 전체 서재 메뉴) --- */
+.app-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 220;
+  background: rgba(16, 30, 24, .46);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease;
+}
+.app-sheet-backdrop.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+.app-bottom-sheet {
+  width: 100%;
+  max-width: 560px;
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--surface);
+  color: var(--text);
+  border-top: 1px solid var(--border-strong);
+  border-radius: 20px 20px 0 0;
+  padding: 10px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+  box-shadow: 0 -10px 36px rgba(14, 28, 22, .25);
+  transform: translateY(24px);
+  transition: transform .2s ease;
+}
+.app-sheet-backdrop.open .app-bottom-sheet {
+  transform: translateY(0);
+}
+.app-sheet-handle {
+  width: 40px;
+  height: 4px;
+  border-radius: 4px;
+  background: var(--border-strong);
+  margin: 2px auto 12px;
+}
+.app-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.app-sheet-title {
+  font-family: var(--font-serif);
+  font-size: 1.12rem;
+  font-weight: 700;
+  margin: 0;
+}
+.app-sheet-badge {
+  font-size: .74rem;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--exam-bg);
+  color: var(--exam-fg);
+}
+.app-sheet-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+.app-sheet-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: .88rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.app-sheet-tile:hover,
+.app-sheet-tile:active {
+  background: var(--surface-soft);
+  border-color: var(--border-strong);
+}
+.app-sheet-tile.accent {
+  background: var(--exam-bg);
+  color: var(--exam-fg);
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border));
+}
+.app-sheet-tile.full {
+  grid-column: 1 / -1;
+}
+.app-sheet-tile-sub {
+  display: block;
+  font-size: .73rem;
+  font-weight: 400;
+  color: var(--text-sub);
+  margin-top: 1px;
+}
+
+/* --- 6. 앱 설치 & 기기 최적화 모달 --- */
+.app-install-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--exam-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  margin-bottom: 14px;
+}
+.app-install-hero img {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  flex: none;
+}
+.app-install-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.app-device-card {
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.app-device-card.current {
+  border-color: var(--accent);
+  background: var(--surface-pure);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.app-device-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-weight: 700;
+  font-size: .92rem;
+}
+.app-device-pill {
+  font-size: .7rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--exam-bg);
+  color: var(--exam-fg);
+}
+.app-device-card p {
+  font-size: .81rem;
+  color: var(--text-sub);
+  line-height: 1.5;
+  margin: 0;
+}
+.app-install-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
