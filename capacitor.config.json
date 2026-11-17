@@ -9,7 +9,7 @@
     "allowMixedContent": false,
     "captureInput": true,
     "webContentsDebuggingEnabled": false,
-    "overrideUserAgent": "Mozilla/5.0 (Linux; Android 15; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36 NONGYEOLApp/1.0"
+    "appendUserAgent": "NONGYEOLApp/1.0"
   },
   "plugins": {
     "CapacitorHttp": {

@@ -57,9 +57,19 @@
   function detectDeviceProfile() {
     const ua = navigator.userAgent || '';
     const w = window.innerWidth || screen.width || 1280;
+    const h = window.innerHeight || screen.height || 800;
+    const minDim = Math.min(w, h);
+    const maxDim = Math.max(w, h);
     const isAndroid = /Android/i.test(ua);
-    const isPhone = w < 768 || (isAndroid && /Mobile/i.test(ua) && w < 860);
-    const isTablet = !isPhone && ((isAndroid && w >= 768) || (w >= 768 && w < 1280 && navigator.maxTouchPoints > 0));
+    const isWindows = /Windows/i.test(ua);
+    const hasTabletUa = /Tablet|Tab|TB3|Lenovo|SM-X|SM-T|iPad/i.test(ua);
+    const isTablet = !isWindows && (
+      hasTabletUa ||
+      ((isAndroid || (navigator.maxTouchPoints > 0 && maxDim <= 1600)) && minDim >= 600)
+    );
+    const isPhone = !isTablet && (
+      minDim < 600 && (w < 600 || (isAndroid && maxDim < 960))
+    );
 
     let kind = 'desktop';
     let label = 'PC 데스크톱 모드';
@@ -70,7 +80,7 @@
       badge = 'PHONE';
     } else if (isTablet) {
       kind = 'tablet';
-      label = isAndroid ? '안드로이드 태블릿 (요가탭 플러스 13 최적화)' : '태블릿 모드';
+      label = isAndroid ? '안드로이드 태블릿 (레노버 요가탭 플러스 13 최적화)' : '태블릿 모드';
       badge = 'TABLET';
     }
     return {
@@ -551,7 +561,7 @@
       + '    </div>'
       + '    <div class="app-device-card' + (p.kind === 'tablet' ? ' current' : '') + '">'
       + '      <div class="app-device-card-head"><span>📘 레노버 요가탭 플러스 13</span><span class="app-device-pill">Android 태블릿</span></div>'
-      + '      <p>• 76px 접이식 슬림 레일 + 2단 서재 화면 유지<br>• 상단 전체화면 버튼으로 필기·단권화 몰입<br>• <b>APK 설치</b> 시 확장앱 없이 EXAONE AI 단독 동작</p>'
+      + '      <p>• 92px 접이식 슬림 레일 + 2단 서재 화면 유지<br>• 상단 전체화면 버튼으로 필기·단권화 몰입<br>• <b>APK 설치</b> 시 확장앱 없이 EXAONE AI 단독 동작</p>'
       + '    </div>'
       + '    <div class="app-device-card' + (p.kind === 'desktop' ? ' current' : '') + '">'
       + '      <div class="app-device-card-head"><span>💻 Windows PC</span><span class="app-device-pill">데스크톱</span></div>'

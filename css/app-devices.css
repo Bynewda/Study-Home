@@ -84,7 +84,30 @@
   50% { opacity: .45; transform: scale(.85); }
 }
 
-/* --- 2. Standalone PWA / Capacitor 네이티브 앱 Safe Area 대응 --- */
+/* --- 2. 사이드바 세로 스크롤 · 하단 안전 여백 & Safe Area 대응 --- */
+.sidebar {
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 24px)) !important;
+}
+.sidebar > *,
+.sidebar .nav,
+.sidebar .nav-item,
+.sidebar .sidebar-footer {
+  flex-shrink: 0 !important;
+}
+.sidebar .nav-item,
+.sidebar button {
+  touch-action: pan-y;
+}
+
 @media (display-mode: standalone) {
   .topbar {
     padding-top: max(10px, env(safe-area-inset-top, 10px));
@@ -104,6 +127,10 @@ html.is-capacitor-app .topbar {
 html.is-capacitor-app .sidebar {
   padding-top: max(var(--s6), env(safe-area-inset-top, var(--s6)));
 }
+html[data-device="tablet"] .content,
+html.is-capacitor-app .content {
+  padding-bottom: calc(96px + env(safe-area-inset-bottom, 24px));
+}
 
 /* 모바일/태블릿 가상 키보드가 올라왔을 때 하단 요소가 입력창을 가리지 않게 숨김 */
 body.keyboard-open .mobile-tabbar,
@@ -111,13 +138,13 @@ body.keyboard-open .ai-widget-root {
   display: none !important;
 }
 
-/* --- 3. 레노버 요가탭 플러스 13 Gen 2 (태블릿: 768px ~ 1199px) 최적화 --- */
-@media (min-width: 768px) and (max-width: 1199px) {
+/* --- 3. 레노버 요가탭 플러스 13 Gen 2 (태블릿: 600px ~ 1199px) 최적화 --- */
+@media (min-width: 600px) and (max-width: 1199px) {
   .app-rail-toggle-btn { display: inline-flex; }
   .topbar .menu-toggle { display: none; }
 
   .app {
-    grid-template-columns: 76px minmax(0, 1fr);
+    grid-template-columns: 92px minmax(0, 1fr);
     transition: grid-template-columns .18s ease;
   }
 
@@ -126,17 +153,18 @@ body.keyboard-open .ai-widget-root {
     top: 0;
     left: auto;
     bottom: auto;
-    height: 100vh;
-    width: 76px;
-    padding: 14px 8px;
+    height: 100dvh;
+    width: 92px;
+    padding: 14px 6px calc(96px + env(safe-area-inset-bottom, 24px)) !important;
     transform: none !important;
     box-shadow: none;
-    overflow-x: hidden;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
     z-index: 30;
     transition: width .18s ease, padding .18s ease;
   }
 
-  /* 접힌 슬림 레일 상태 (기본값) */
+  /* 접힌 슬림 레일 상태 (기본값 — 한글 6자 라벨 잘림 방지) */
   body:not(.tablet-rail-expanded) .brand-wrap {
     padding: 2px 0 12px;
     margin-bottom: 6px;
@@ -162,18 +190,18 @@ body.keyboard-open .ai-widget-root {
     flex-direction: column;
     justify-content: center;
     align-items: center;
-    gap: 3px;
-    padding: 7px 4px;
-    min-height: 48px;
-    font-size: .68rem;
-    line-height: 1.15;
+    gap: 4px;
+    padding: 8px 4px;
+    min-height: 52px;
+    font-size: .72rem;
+    line-height: 1.2;
     text-align: center;
-    letter-spacing: -.02em;
+    letter-spacing: -.03em;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow: visible;
   }
   body:not(.tablet-rail-expanded) .nav-item[aria-current="page"]::before {
+    left: 1px;
     top: 10px;
     bottom: 10px;
   }
@@ -181,12 +209,13 @@ body.keyboard-open .ai-widget-root {
     align-items: stretch;
   }
   body:not(.tablet-rail-expanded) #cloud-box .btn-block {
-    font-size: .68rem;
-    padding: 6px 4px;
-    min-height: 38px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    font-size: .7rem;
+    line-height: 1.25;
+    padding: 8px 4px;
+    min-height: 40px;
+    white-space: normal;
+    word-break: keep-all;
+    text-align: center;
   }
   body:not(.tablet-rail-expanded) #cloud-box .row {
     justify-content: center;
@@ -199,10 +228,25 @@ body.keyboard-open .ai-widget-root {
   }
   body.tablet-rail-expanded .sidebar {
     width: 248px;
-    padding: var(--s6) var(--s4) var(--s4);
+    padding: var(--s6) var(--s4) calc(96px + env(safe-area-inset-bottom, 24px)) !important;
   }
+}
 
-  /* 요가탭 플러스 13 가로 모드(960px~1199px): 2단 서재·대시보드 유지 */
+/* 스마트폰이 아닌 600~767px 태블릿(분할화면/세로 보정)에서는 하단바 대신 슬림 레일 유지 */
+@media (min-width: 600px) and (max-width: 767px) {
+  .mobile-tabbar,
+  .mobile-only {
+    display: none !important;
+  }
+  .topbar-crumb {
+    display: flex !important;
+  }
+  .mobile-brand-bar {
+    display: none !important;
+  }
+  .content {
+    padding: var(--s5) var(--s5) calc(96px + env(safe-area-inset-bottom, 24px)) !important;
+  }
 }
 
 @media (min-width: 960px) and (max-width: 1199px) {
@@ -226,12 +270,12 @@ body.keyboard-open .ai-widget-root {
     min-height: 44px;
   }
   .content {
-    padding-bottom: 56px;
+    padding-bottom: calc(96px + env(safe-area-inset-bottom, 24px));
   }
 }
 
-/* --- 4. 갤럭시 S25 엣지 (모바일: <= 767px) 5탭 하단바 & 바텀시트 --- */
-@media (max-width: 767px) {
+/* --- 4. 갤럭시 S25 엣지 (모바일: <= 599px 또는 폰 가로 모드 <= 767px) 5탭 하단바 & 바텀시트 --- */
+@media (max-width: 599px) {
   .topbar-inner {
     gap: 8px;
   }

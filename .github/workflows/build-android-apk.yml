@@ -86,6 +86,30 @@ jobs:
                   '<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <color name="ic_launcher_background">#244C3D</color>\n</resources>\n',
                   encoding='utf-8'
               )
+          # 4) MainActivity.java 에 '; wv' 제거 로직 주입 (태블릿/폰 고유 UA 보존 + Google 로그인 허용)
+          import re
+          for ma in Path('android/app/src/main/java').rglob('MainActivity.java'):
+              mtxt = ma.read_text(encoding='utf-8')
+              if 'setUserAgentString' not in mtxt:
+                  replacement = '''import android.os.Bundle;
+import android.webkit.WebSettings;
+
+public class MainActivity extends BridgeActivity {
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        if (this.bridge != null && this.bridge.getWebView() != null) {
+            WebSettings ws = this.bridge.getWebView().getSettings();
+            String ua = ws.getUserAgentString();
+            if (ua != null) {
+                ws.setUserAgentString(ua.replace("; wv)", ")").replace("; wv;", ";"));
+            }
+        }
+    }
+}'''
+                  mtxt_new, cnt = re.subn(r'public\s+class\s+MainActivity\s+extends\s+BridgeActivity\s*\{\s*\}', replacement, mtxt)
+                  if cnt > 0:
+                      ma.write_text(mtxt_new, encoding='utf-8')
           PY
           npx cap sync android
 
